@@ -184,12 +184,12 @@ print("✓ Classification function ready")
 # %%
 # Load the datasets using pandas
 full_dataset = pd.read_csv(
-    "data/combined_metadata_noncancer_removed.csv",
+    "../data/combined_metadata_noncancer_removed.csv",
     dtype={"group": str},
     low_memory=False
 )
 
-df = pd.read_csv("data/train_test.csv")
+df = pd.read_csv("../data/train_test.csv")
 
 # %%
 # Select the columns you need from df
