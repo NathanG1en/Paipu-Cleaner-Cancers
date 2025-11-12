@@ -1,2 +1,3 @@
 /data/*.csv
 Cancers-Freya/combined_metadata_noncancer_removed.csv
+data/combined_metadata_noncancer_removed.csv
