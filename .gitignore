@@ -1,3 +1,15 @@
-/data/*.csv
-Cancers-Freya/combined_metadata_noncancer_removed.csv
-data/combined_metadata_noncancer_removed.csv
+# macOS junk
+.DS_Store
+
+# IDE clutter
+.idea/
+
+# Data
+*.csv
+*.xlsx
+
+# Big local datasets
+data/
+*.csv
+*.xlsx
+data/
