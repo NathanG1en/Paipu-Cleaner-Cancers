@@ -89,19 +89,24 @@ def classify_cancer_samples(df: pl.DataFrame) -> pl.DataFrame:
     return df
 
 
-def medspacy_classify(row_texts):
+def medspacy_classify(row_texts, nlp_pipeline=None):
     """
     Classify a list of text fields using medspacy NER and context detection.
     Returns: "CANCER", "NOT_CANCER", "UNCERTAIN", or "NO_SIGNAL"
+    
+    Args:
+        row_texts: List of text strings to classify
+        nlp_pipeline: The medspacy pipeline to use. If None, uses global nlp.
     """
-    # Note: nlp should be initialized externally and passed in or made global
-    # This function assumes nlp is available in the calling scope
+    # Use provided pipeline or fall back to global
+    pipeline = nlp_pipeline if nlp_pipeline is not None else get_nlp()
+    
     cancer_found = False
     non_cancer_found = False
     negation_found = False
 
     for text in row_texts:
-        doc = nlp(text)
+        doc = pipeline(text)
         for ent in doc.ents:
             if ent.label_ == "CANCER":
                 if ent._.is_negated:
@@ -404,7 +409,7 @@ def initialize_medspacy_pipeline(*rule_lists):
         custom_rules = [...]
         nlp = initialize_medspacy_pipeline(cancer_rules, non_cancer_rules, custom_rules)
     """
-    import medspacy
+
     
     nlp = medspacy.load(enable=["ner", "context"])
     tm = nlp.get_pipe("medspacy_target_matcher")
