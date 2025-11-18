@@ -2,6 +2,7 @@ import polars as pl
 import medspacy
 from medspacy.ner import TargetRule
 from medspacy.target_matcher import TargetMatcher
+from pathlib import Path
 
 from functions import (
     classify_cancer_samples,
@@ -16,6 +17,10 @@ from functions import (
 
 
 if __name__ == "__main__":
+    # ensure outputs directory exists
+    output_dir = Path("outputs")
+    output_dir.mkdir(exist_ok=True)
+    
     # Step 1: Get the default rules
     cancer_rules, non_cancer_rules = get_default_target_rules()
     
@@ -23,7 +28,9 @@ if __name__ == "__main__":
     existing_rules = cancer_rules + non_cancer_rules
     
     # Step 2: Initialize the pipeline with these rules
+    print("Initializing medspacy pipeline...")
     nlp = initialize_medspacy_pipeline(cancer_rules, non_cancer_rules)
+    print(f"Pipeline initialized. Total rules: {len(nlp.get_pipe('medspacy_target_matcher').rules)}")
 
     # Step 3: Load data and generate disease-specific rules
     all_samples = pl.read_csv(
@@ -32,11 +39,13 @@ if __name__ == "__main__":
         infer_schema_length=0,
     )
 
+    print(f"\nTotal samples loaded: {len(all_samples)}")
+
     unique_diseases = all_samples.select("disease").unique().to_series().to_list()
 
     # Generate and add disease-specific rules
     auto_rules, skipped = generate_disease_rules(unique_diseases, nlp, existing_rules)
-
+    
     if auto_rules:
         tm = nlp.get_pipe("medspacy_target_matcher")
         tm.add(auto_rules)
@@ -47,24 +56,58 @@ if __name__ == "__main__":
     # Step 4: Do initial prediction with regex-based classifier
     predicted_df = classify_cancer_samples(all_samples)
 
+    # Print regex classification summary
+    print("\n=== Regex Classification Summary ===")
+    regex_summary = (
+        predicted_df
+        .group_by("confidence_category")
+        .agg(pl.count().alias("count"))
+        .sort("count", descending=True)
+    )
+    print(regex_summary)
+
     # Step 5: Filter uncertain samples that need medspacy analysis
     uncertain_df = predicted_df.filter(
         pl.col("confidence_category").is_in([
-            "uncertain_no_signal",
-            "uncertain_weak_signal",
+            "uncertain_no_signal", 
+            "uncertain_weak_signal", 
             "likely_non_cancer"
         ])
     )
 
+    print(f"\n=== Medspacy Processing ===")
+    print(f"Samples requiring medspacy analysis: {len(uncertain_df)}")
+
     # Step 6: Process uncertain samples with medspacy
     results = []
-    for row in uncertain_df.iter_rows(named=True):
+    cancer_detected = 0
+    not_cancer_detected = 0
+    no_signal = 0
+    
+    for i, row in enumerate(uncertain_df.iter_rows(named=True)):
         texts = clean_texts(row)
         if texts:  # skip empty rows
             result = medspacy_classify(texts, nlp)  # Pass nlp pipeline
+            if result == "CANCER":
+                cancer_detected += 1
+            elif result == "NOT_CANCER":
+                not_cancer_detected += 1
+            elif result == "NO_SIGNAL":
+                no_signal += 1
         else:
             result = "NO_SIGNAL"
+            no_signal += 1
         results.append(result)
+        
+        # Print progress every 100 samples
+        if (i + 1) % 100 == 0:
+            print(f"Processed {i + 1}/{len(uncertain_df)} samples...")
+
+    print(f"\n=== Medspacy Results ===")
+    print(f"CANCER detected: {cancer_detected}")
+    print(f"NOT_CANCER detected: {not_cancer_detected}")
+    print(f"NO_SIGNAL: {no_signal}")
+    print(f"UNCERTAIN: {len(results) - cancer_detected - not_cancer_detected - no_signal}")
 
     # Add medspacy results to uncertain_df
     uncertain_df = uncertain_df.with_columns(
@@ -86,7 +129,7 @@ if __name__ == "__main__":
         pl.struct(["confidence_category", "medspacy_detected_cancer"])
         .map_elements(
             lambda row: resolve_uncertain(
-                row["confidence_category"],
+                row["confidence_category"], 
                 row["medspacy_detected_cancer"]
             ),
             return_dtype=pl.Utf8,
@@ -95,20 +138,46 @@ if __name__ == "__main__":
     )
 
     # Step 9: Display results
-    idx = predicted_df.columns.index("cancer_type")
-    cols_to_keep = ["experiment_alias", "source_name", "tissue", "phenotype", "disease"]
-    cols_to_keep += ["final_classification", "medspacy_detected_cancer"]
+    print("\n=== Final Classification Summary ===")
+    final_summary = (
+        predicted_df
+        .group_by("final_classification")
+        .agg(pl.count().alias("count"))
+        .sort("count", descending=True)
+    )
+    print(final_summary)
 
-    print(predicted_df.select(cols_to_keep))
+    # Define columns to keep (including run_accession)
+    cols_to_keep = [
+        "run_accession",
+        "experiment_alias", 
+        "source_name", 
+        "tissue", 
+        "phenotype", 
+        "disease",
+        "final_classification", 
+        "medspacy_detected_cancer"
+    ]
 
-    # Step 10: Filter for specific classifications if needed
+    print("\n=== Sample Results ===")
+    print(predicted_df.select(cols_to_keep).head(20))
+
+    # Step 10: Export minimal CSV to outputs folder
+    output_file = output_dir / "classified_samples.csv"
+    predicted_df.select(cols_to_keep).write_csv(output_file)
+    print(f"\n✓ Exported full results to: {output_file}")
+
+    # Step 11: Filter for specific classifications if needed
     predicted_df_filtered = (
         predicted_df
         .filter(pl.col("final_classification") == "confirmed_by_medspacy")
         .select(cols_to_keep)
     )
 
-    print("\n=== Confirmed by medspacy ===")
-    print(predicted_df_filtered)
-
-
+    print(f"\n=== Confirmed by medspacy ({len(predicted_df_filtered)} samples) ===")
+    print(predicted_df_filtered.head(20))
+    
+    # Export confirmed_by_medspacy subset
+    confirmed_output = output_dir / "confirmed_by_medspacy.csv"
+    predicted_df_filtered.write_csv(confirmed_output)
+    print(f"✓ Exported medspacy-confirmed results to: {confirmed_output}")
