@@ -8,15 +8,22 @@ import medspacy
 from medspacy.ner import TargetRule
 from medspacy.target_matcher import TargetMatcher
 
+# so I don't repeat it
+PRIORITY_COLS = [
+    "source_name", "tissue", "phenotype", "disease", "cell_type", "tumor_type",
+    "sample_name", "condition", "tumor", "cell_type.2", "cell_type.3", 
+    "celltype", "tissue_type", "health_state", "tissue_cell_type_source", 
+    "source", "model", "tissue_cell_type", "cell_types"
+]
 
-def classify_cancer_samples(df: pl.DataFrame) -> pl.DataFrame:
+
+def classify_cancer_samples(df: pl.DataFrame, PRIORITY_COLS=PRIORITY_COLS) -> pl.DataFrame:
     """
     Classify samples as cancer / non-cancer / uncertain based on metadata text patterns.
     Returns the same DataFrame with added classification columns.
     """
 
     # --- Step 1: Setup --- look
-    PRIORITY_COLS = ["source_name", "tissue", "phenotype", "disease", "cell_type", "tumor_type"]
     PRIORITY_COLS = [c for c in PRIORITY_COLS if c in df.columns]
 
     # Regex patterns
@@ -34,7 +41,7 @@ def classify_cancer_samples(df: pl.DataFrame) -> pl.DataFrame:
             .str.replace_all(r"\s+", " ")
             .str.strip_chars()
         )
-
+    # TODO: change this variable name
     # --- Step 2: Sample name detection ---
     sample_name_col = "title" if "title" in df.columns else "biosample"
 
@@ -130,14 +137,87 @@ def medspacy_classify(row_texts, nlp_pipeline=None):
         return "NO_SIGNAL"
 
 
-def clean_texts(row):
+def medspacy_classify_batch(all_row_texts, nlp_pipeline=None, batch_size=32):
+    """
+    Classify multiple samples using medspacy with batching for speed.
+    
+    Args:
+        all_row_texts: List of lists, where each inner list contains text strings for one sample
+        nlp_pipeline: The medspacy pipeline to use. If None, uses global nlp.
+        batch_size: Number of texts to process in each batch
+    
+    Returns:
+        List of classifications: "CANCER", "NOT_CANCER", "UNCERTAIN", or "NO_SIGNAL"
+    """
+    pipeline = nlp_pipeline if nlp_pipeline is not None else get_nlp()
+    
+    # Flatten all texts with their sample indices
+    flattened_texts = []
+    text_to_sample = []  # Maps text index to sample index
+    
+    for sample_idx, texts in enumerate(all_row_texts):
+        if not texts:  # Empty texts
+            continue
+        for text in texts:
+            flattened_texts.append(text)
+            text_to_sample.append(sample_idx)
+    
+    # Process all texts in batches using nlp.pipe()
+    docs = list(pipeline.pipe(flattened_texts, batch_size=batch_size))
+    
+    # Organize results by sample
+    sample_results = [{"cancer": False, "non_cancer": False, "negation": False} 
+                      for _ in range(len(all_row_texts))]
+    
+    for doc_idx, doc in enumerate(docs):
+        sample_idx = text_to_sample[doc_idx]
+        
+        for ent in doc.ents:
+            if ent.label_ == "CANCER":
+                if ent._.is_negated:
+                    sample_results[sample_idx]["negation"] = True
+                else:
+                    sample_results[sample_idx]["cancer"] = True
+            elif ent.label_ == "NON_CANCER":
+                if not ent._.is_negated:
+                    sample_results[sample_idx]["non_cancer"] = True
+    
+    # Apply decision hierarchy to each sample
+    final_results = []
+    for idx, result in enumerate(sample_results):
+        # Check if this sample had no texts
+        if not all_row_texts[idx]:
+            final_results.append("NO_SIGNAL")
+            continue
+            
+        cancer_found = result["cancer"]
+        non_cancer_found = result["non_cancer"]
+        negation_found = result["negation"]
+        
+        if cancer_found and not negation_found:
+            final_results.append("CANCER")
+        elif non_cancer_found and not cancer_found:
+            final_results.append("NOT_CANCER")
+        elif cancer_found and non_cancer_found:
+            final_results.append("UNCERTAIN")
+        elif negation_found:
+            final_results.append("NOT_CANCER")
+        else:
+            final_results.append("NO_SIGNAL")
+    
+    return final_results
+
+
+def clean_texts(row, priority_cols=PRIORITY_COLS):
     """
     Extract and clean text fields from a row dictionary.
     Returns a list of non-empty strings.
     """
+    # TODO: look at this and possibly add PRIORITY_COLS, could add more complexity for no reason
+    # * instead of ["source_name", ... "cell_type"]
     texts = [
         str(row[col]).strip()
-        for col in ["source_name", "tissue", "phenotype", "disease"]
+        for col in ["source_name", "tissue", "phenotype", "disease", "tumor_type", "cell_type"]
         if col in row and row[col] not in (None, "None", "nan", "NaN", "", "null")
     ]
     return texts

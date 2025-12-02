@@ -6,7 +6,7 @@ from pathlib import Path
 
 from functions import (
     classify_cancer_samples,
-    medspacy_classify,
+    medspacy_classify_batch,  # New batch function
     clean_texts,
     resolve_uncertain,
     initialize_medspacy_pipeline,
@@ -17,7 +17,7 @@ from functions import (
 
 
 if __name__ == "__main__":
-    # ensure outputs directory exists
+    # Ensure outputs folder exists
     output_dir = Path("outputs")
     output_dir.mkdir(exist_ok=True)
     
@@ -78,36 +78,29 @@ if __name__ == "__main__":
     print(f"\n=== Medspacy Processing ===")
     print(f"Samples requiring medspacy analysis: {len(uncertain_df)}")
 
-    # Step 6: Process uncertain samples with medspacy
-    results = []
-    cancer_detected = 0
-    not_cancer_detected = 0
-    no_signal = 0
-    
-    for i, row in enumerate(uncertain_df.iter_rows(named=True)):
+    # Step 6: Process uncertain samples with medspacy (BATCHED)
+    # Prepare all texts upfront
+    all_texts = []
+    for row in uncertain_df.iter_rows(named=True):
         texts = clean_texts(row)
-        if texts:  # skip empty rows
-            result = medspacy_classify(texts, nlp)  # Pass nlp pipeline
-            if result == "CANCER":
-                cancer_detected += 1
-            elif result == "NOT_CANCER":
-                not_cancer_detected += 1
-            elif result == "NO_SIGNAL":
-                no_signal += 1
-        else:
-            result = "NO_SIGNAL"
-            no_signal += 1
-        results.append(result)
-        
-        # Print progress every 100 samples
-        if (i + 1) % 100 == 0:
-            print(f"Processed {i + 1}/{len(uncertain_df)} samples...")
+        all_texts.append(texts if texts else [])
+    
+    print(f"Processing {len(all_texts)} samples in batches...")
+    
+    # Use batch processing
+    results = medspacy_classify_batch(all_texts, nlp, batch_size=64)
+    
+    # Count results
+    cancer_detected = results.count("CANCER")
+    not_cancer_detected = results.count("NOT_CANCER")
+    no_signal = results.count("NO_SIGNAL")
+    uncertain = results.count("UNCERTAIN")
 
     print(f"\n=== Medspacy Results ===")
     print(f"CANCER detected: {cancer_detected}")
     print(f"NOT_CANCER detected: {not_cancer_detected}")
     print(f"NO_SIGNAL: {no_signal}")
-    print(f"UNCERTAIN: {len(results) - cancer_detected - not_cancer_detected - no_signal}")
+    print(f"UNCERTAIN: {uncertain}")
 
     # Add medspacy results to uncertain_df
     uncertain_df = uncertain_df.with_columns(
@@ -148,15 +141,25 @@ if __name__ == "__main__":
     print(final_summary)
 
     # Define columns to keep (including run_accession)
+    # cols_to_keep = [
+    #     "run_accession",
+    #     "experiment_alias",
+    #     "bioproject",
+    #     "source_name",
+    #     "tissue",
+    #     "phenotype",
+    #     "disease",
+    #     "tumor_type",
+    #     "cell_type",
+    #     "cancer_type",
+    #     "final_classification",
+    #     "medspacy_detected_cancer"
+    # ]
     cols_to_keep = [
-        "run_accession",
-        "experiment_alias", 
-        "source_name", 
-        "tissue", 
-        "phenotype", 
-        "disease",
-        "final_classification", 
-        "medspacy_detected_cancer"
+        "source_name", "tissue", "phenotype", "disease", "cell_type", "tumor_type",
+        "sample_name", "condition", "tumor", "cell_type.2", "cell_type.3",
+        "celltype", "tissue_type", "health_state", "tissue_cell_type_source",
+        "source", "model", "tissue_cell_type", "cell_types"
     ]
 
     print("\n=== Sample Results ===")
