@@ -39,6 +39,8 @@ if __name__ == "__main__":
         infer_schema_length=0,
     )
 
+    # all_samples = all_samples.slice(0, 100)
+
     print(f"\nTotal samples loaded: {len(all_samples)}")
 
     unique_diseases = all_samples.select("disease").unique().to_series().to_list()
@@ -91,10 +93,10 @@ if __name__ == "__main__":
     results = medspacy_classify_batch(all_texts, nlp, batch_size=64)
     
     # Count results
-    cancer_detected = results.count("CANCER")
-    not_cancer_detected = results.count("NOT_CANCER")
-    no_signal = results.count("NO_SIGNAL")
-    uncertain = results.count("UNCERTAIN")
+    cancer_detected = sum(r["label"] == "CANCER" for r in results)
+    not_cancer_detected = sum(r["label"] == "NOT_CANCER" for r in results)
+    no_signal = sum(r["label"] == "NO_SIGNAL" for r in results)
+    uncertain = sum(r["label"] == "UNCERTAIN" for r in results)
 
     print(f"\n=== Medspacy Results ===")
     print(f"CANCER detected: {cancer_detected}")
@@ -119,15 +121,23 @@ if __name__ == "__main__":
 
     # Step 8: Create final classification using resolve_uncertain
     predicted_df = predicted_df.with_columns(
-        pl.struct(["confidence_category", "medspacy_detected_cancer"])
-        .map_elements(
+        pl.struct(["confidence_category", "medspacy_detected_cancer"]).map_elements(
             lambda row: resolve_uncertain(
-                row["confidence_category"], 
+                row["confidence_category"],
                 row["medspacy_detected_cancer"]
             ),
-            return_dtype=pl.Utf8,
-        )
-        .alias("final_classification")
+            return_dtype=pl.Struct([
+                pl.Field("final_label", pl.Utf8),
+                pl.Field("regex_label", pl.Utf8),
+                pl.Field("med_label", pl.Utf8),
+                pl.Field("regex_reason", pl.Utf8),
+                pl.Field("med_reason", pl.Utf8),
+            ])
+        ).alias("final_classification")
+    )
+
+    predicted_df = predicted_df.with_columns(
+        pl.col("final_classification").struct.field("final_label").alias("final_label")
     )
 
     # Step 9: Display results
@@ -156,14 +166,45 @@ if __name__ == "__main__":
     #     "medspacy_detected_cancer"
     # ]
     cols_to_keep = [
+        "run_accession", "experiment_alias", "bioproject",
         "source_name", "tissue", "phenotype", "disease", "cell_type", "tumor_type",
         "sample_name", "condition", "tumor", "cell_type.2", "cell_type.3",
         "celltype", "tissue_type", "health_state", "tissue_cell_type_source",
-        "source", "model", "tissue_cell_type", "cell_types"
+        "source", "model", "tissue_cell_type", "cell_types", "cancer_type",
+        "final_label",  # <-- flattened
+        "regex_label",
+        "med_label",
+        "regex_reason",
+        "med_reason"
     ]
 
     print("\n=== Sample Results ===")
-    print(predicted_df.select(cols_to_keep).head(20))
+    # TODO: fix this, make this happen upstream, so maybe don't store stuff in a struct in classify_cancer_samples
+    # --- Fix NULL medspacy_detected_cancer rows (must happen BEFORE flattening) ---
+    predicted_df = predicted_df.with_columns([
+        pl.when(pl.col("medspacy_detected_cancer").is_null())
+        .then(pl.struct([
+            pl.lit("").alias("label"),
+            pl.lit("").alias("reason"),
+        ]))
+        .otherwise(pl.col("medspacy_detected_cancer"))
+        .alias("medspacy_detected_cancer")
+    ])
+
+    # --- Flatten final_classification ---
+    predicted_df = predicted_df.with_columns([
+        pl.col("final_classification").struct.field("final_label").alias("final_label"),
+        pl.col("final_classification").struct.field("regex_label").alias("regex_label"),
+        pl.col("final_classification").struct.field("med_label").alias("med_label"),
+        pl.col("final_classification").struct.field("regex_reason").alias("regex_reason"),
+        pl.col("final_classification").struct.field("med_reason").alias("med_reason"),
+    ]).drop("final_classification")
+
+    # --- Flatten medspacy_detected_cancer ---
+    predicted_df = predicted_df.with_columns([
+        pl.col("medspacy_detected_cancer").struct.field("label").alias("med_label2"),
+        pl.col("medspacy_detected_cancer").struct.field("reason").alias("med_reason2"),
+    ]).drop("medspacy_detected_cancer")
 
     # Step 10: Export minimal CSV to outputs folder
     output_file = output_dir / "classified_samples.csv"
@@ -173,7 +214,7 @@ if __name__ == "__main__":
     # Step 11: Filter for specific classifications if needed
     predicted_df_filtered = (
         predicted_df
-        .filter(pl.col("final_classification") == "confirmed_by_medspacy")
+        .filter(pl.col("final_label") == "confirmed_by_medspacy")
         .select(cols_to_keep)
     )
 
