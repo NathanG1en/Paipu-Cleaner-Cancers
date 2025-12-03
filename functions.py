@@ -147,20 +147,32 @@ def classify_cancer_samples(df: pl.DataFrame, PRIORITY_COLS=PRIORITY_COLS) -> pl
     ])
 
     # --- Step 6: Decision explanation ---
+    def build_decision_reason(row):
+        cancer_hits = []
+        non_hits = []
+
+        for col in PRIORITY_COLS:
+            if row.get(f"cancer_in_{col}", False):
+                cancer_hits.append(col)
+            if row.get(f"negative_in_{col}", False):
+                non_hits.append(col)
+
+        if row.get("cancer_in_sample_name", False):
+            cancer_hits.append(sample_name_col)
+        if row.get("negative_in_sample_name", False):
+            non_hits.append(sample_name_col)
+
+        if cancer_hits:
+            return f"Cancer terms detected in: {', '.join(cancer_hits)}"
+        elif non_hits:
+            return f"Non-cancer terms detected in: {', '.join(non_hits)}"
+        else:
+            return "No cancer-related terms detected"
+
     df = df.with_columns([
-        (
-            pl.when(pl.col("cancer_evidence").list.len() > 0)
-            .then(pl.concat_str([
-                pl.lit("Cancer terms detected in: "),
-                pl.col("cancer_evidence").list.join(", ")
-            ]))
-            .when(pl.col("negative_evidence").list.len() > 0)
-            .then(pl.concat_str([
-                pl.lit("Non-cancer (normal/benign) terms detected in: "),
-                pl.col("negative_evidence").list.join(", ")
-            ]))
-            .otherwise(pl.lit("No cancer-related terms detected"))
-        ).alias("decision_reason")
+        pl.struct(df.columns)
+          .map_elements(build_decision_reason, return_dtype=pl.Utf8)
+          .alias("decision_reason")
     ])
 
     return df
@@ -207,98 +219,73 @@ def medspacy_classify(row_texts, nlp_pipeline=None):
         return "NO_SIGNAL"
 
 
-def medspacy_classify_batch(all_row_texts, nlp_pipeline=None, batch_size=32):
+def medspacy_classify_batch(all_row_texts: list[list[str]], nlp_pipeline=None, batch_size: int = 32) -> tuple[list[str], list[str]]:
     """
-    Classify multiple samples using medspacy with batching for speed + EVIDENCE.
-
-    Returns list of dicts:
-    {
-        "label": "CANCER" | "NOT_CANCER" | "UNCERTAIN" | "NO_SIGNAL",
-        "cancer_terms": [...],
-        "non_cancer_terms": [...],
-        "negated_terms": [...]
-    }
+    Batch process multiple rows of texts with MedSpacy.
+    
+    Args:
+        all_row_texts: List of text lists, one per row
+        nlp_pipeline: MedSpacy pipeline (uses global if None)
+        batch_size: Number of rows to process at once
+        
+    Returns:
+        Tuple of (labels, reasons) - two parallel lists
     """
-    pipeline = nlp_pipeline if nlp_pipeline is not None else get_nlp()
-
-    # Flatten texts and index mapping
-    flattened_texts = []
-    text_to_sample = []
-    for sample_idx, texts in enumerate(all_row_texts):
-        if not texts:
-            continue
-        for text in texts:
-            flattened_texts.append(text)
-            text_to_sample.append(sample_idx)
-
-    docs = list(pipeline.pipe(flattened_texts, batch_size=batch_size))
-
-    # Storage with evidence
-    sample_results = [
-        {
-            "cancer": False,
-            "non_cancer": False,
-            "negation": False,
-            "cancer_terms": [],
-            "non_cancer_terms": [],
-            "negated_terms": []
-        }
-        for _ in range(len(all_row_texts))
-    ]
-
-    # Fill evidence
-    for doc_idx, doc in enumerate(docs):
-        sample_idx = text_to_sample[doc_idx]
-
-        for ent in doc.ents:
-            if ent.label_ == "CANCER":
-                if ent._.is_negated:
-                    sample_results[sample_idx]["negation"] = True
-                    sample_results[sample_idx]["negated_terms"].append(ent.text)
-                else:
-                    sample_results[sample_idx]["cancer"] = True
-                    sample_results[sample_idx]["cancer_terms"].append(ent.text)
-
-            elif ent.label_ == "NON_CANCER":
-                if not ent._.is_negated:
-                    sample_results[sample_idx]["non_cancer"] = True
-                    sample_results[sample_idx]["non_cancer_terms"].append(ent.text)
-
-    # Assign final label with reason
-    final_results = []
-    for idx, result in enumerate(sample_results):
-        if not all_row_texts[idx]:
-            final_results.append({
-                "label": "NO_SIGNAL",
-                "cancer_terms": [],
-                "non_cancer_terms": [],
-                "negated_terms": []
-            })
-            continue
-
-        cancer_found = result["cancer"]
-        non_cancer_found = result["non_cancer"]
-        negation_found = result["negation"]
-
-        if cancer_found and not negation_found:
-            label = "CANCER"
-        elif non_cancer_found and not cancer_found:
-            label = "NOT_CANCER"
-        elif cancer_found and non_cancer_found:
-            label = "UNCERTAIN"
-        elif negation_found:
-            label = "NOT_CANCER"
-        else:
-            label = "NO_SIGNAL"
-
-        final_results.append({
-            "label": label,
-            "cancer_terms": result["cancer_terms"],
-            "non_cancer_terms": result["non_cancer_terms"],
-            "negated_terms": result["negated_terms"]
-        })
-
-    return final_results
+    if nlp_pipeline is None:
+        nlp_pipeline = get_nlp()
+    
+    labels = []
+    reasons = []
+    
+    for i in range(0, len(all_row_texts), batch_size):
+        batch = all_row_texts[i:i + batch_size]
+        
+        for row_texts in batch:
+            if not row_texts:
+                labels.append("NO_SIGNAL")
+                reasons.append("No text to analyze")
+                continue
+            
+            cancer_found = False
+            non_cancer_found = False
+            negation_found = False
+            detected_terms = []
+            
+            for text in row_texts:
+                if not text or not text.strip():
+                    continue
+                doc = nlp_pipeline(text)
+                for ent in doc.ents:
+                    if ent.label_ == "CANCER":
+                        if ent._.is_negated:
+                            negation_found = True
+                            detected_terms.append(f"negated:{ent.text}")
+                        else:
+                            cancer_found = True
+                            detected_terms.append(ent.text)
+                    elif ent.label_ == "NON_CANCER":
+                        if not ent._.is_negated:
+                            non_cancer_found = True
+                            detected_terms.append(f"non-cancer:{ent.text}")
+            
+            # Decision logic
+            if cancer_found and not negation_found:
+                labels.append("CANCER")
+                reasons.append(f"Detected: {', '.join(detected_terms)}")
+            elif non_cancer_found and not cancer_found:
+                labels.append("NOT_CANCER")
+                reasons.append(f"Non-cancer terms: {', '.join(detected_terms)}")
+            elif cancer_found and non_cancer_found:
+                labels.append("UNCERTAIN")
+                reasons.append(f"Mixed signals: {', '.join(detected_terms)}")
+            elif negation_found:
+                labels.append("NOT_CANCER")
+                reasons.append(f"Negated cancer terms: {', '.join(detected_terms)}")
+            else:
+                labels.append("NO_SIGNAL")
+                reasons.append("No cancer-related terms detected")
+    
+    return labels, reasons
 
 
 def clean_texts(row, priority_cols=PRIORITY_COLS):
@@ -316,62 +303,41 @@ def clean_texts(row, priority_cols=PRIORITY_COLS):
     return texts
 
 
-def resolve_uncertain(regex_label: str, med_result: dict | None) -> dict:
+def resolve_uncertain(
+    regex_label: str,
+    med_label: str | None = None,
+    regex_reason: str = "",
+    med_reason: str = ""
+) -> tuple[str, str, str, str, str]:
     """
-    Merge regex classification with medspacy classification + evidence.
+    Merge regex classification with medspacy classification.
 
-    regex_label: str
-        The output of classify_cancer_samples()
+    Args:
+        regex_label: The output of classify_cancer_samples() (e.g., "confident_cancer")
+        med_label: MedSpacy label ("CANCER", "NOT_CANCER", "UNCERTAIN", "NO_SIGNAL", or "")
+        regex_reason: Explanation from regex classifier
+        med_reason: Explanation from medspacy
 
-    med_result: dict | None
-        Example:
-        {
-            "label": "CANCER",
-            "cancer_terms": [...],
-            "non_cancer_terms": [...],
-            "negated_terms": [...]
-        }
-
-    Returns combined result:
-    {
-        "final_label": ...,
-        "regex_label": ...,
-        "med_label": ...,
-        "regex_reason": "...",
-        "med_reason": "..."
-    }
+    Returns:
+        Tuple of (final_label, regex_label, med_label, regex_reason, med_reason)
     """
-
-    # If medspacy returned nothing
-    if med_result is None:
-        return {
-            "final_label": regex_label,
-            "regex_label": regex_label,
-            "med_label": None,
-            "regex_reason": f"Regex classifier produced '{regex_label}'.",
-            "med_reason": "No medspacy signal."
-        }
-
-    med_label = med_result["label"]
-    cancer_terms = med_result.get("cancer_terms", [])
-    non_cancer_terms = med_result.get("non_cancer_terms", [])
-    neg_terms = med_result.get("negated_terms", [])
-
-    # Build medreason text
-    med_reason_parts = []
-    if cancer_terms:
-        med_reason_parts.append(f"Cancer terms: {', '.join(cancer_terms)}")
-    if non_cancer_terms:
-        med_reason_parts.append(f"Non-cancer terms: {', '.join(non_cancer_terms)}")
-    if neg_terms:
-        med_reason_parts.append(f"Negated cancer terms: {', '.join(neg_terms)}")
-    if not med_reason_parts:
-        med_reason_parts.append("No cancer-related entities detected.")
-    med_reason = " | ".join(med_reason_parts)
-
-    # Decision rules
     UNCERTAIN_REGEX = {"uncertain_no_signal", "uncertain_weak_signal"}
 
+    # Handle missing/empty medspacy result
+    if not med_label:
+        return (
+            regex_label,
+            regex_label,
+            "",
+            regex_reason or f"Regex classifier produced '{regex_label}'.",
+            "No medspacy signal."
+        )
+
+    # Build regex_reason if not provided
+    if not regex_reason:
+        regex_reason = f"Regex classifier produced '{regex_label}'."
+
+    # Decision rules
     if regex_label in UNCERTAIN_REGEX:
         if med_label == "CANCER":
             final = "confirmed_by_medspacy"
@@ -390,13 +356,7 @@ def resolve_uncertain(regex_label: str, med_result: dict | None) -> dict:
         # Default to regex label
         final = regex_label
 
-    return {
-        "final_label": final,
-        "regex_label": regex_label,
-        "med_label": med_label,
-        "regex_reason": f"Regex classifier produced '{regex_label}'.",
-        "med_reason": med_reason
-    }
+    return (final, regex_label, med_label, regex_reason, med_reason)
 
 
 

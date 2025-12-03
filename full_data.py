@@ -1,18 +1,16 @@
 import polars as pl
-import medspacy
-from medspacy.ner import TargetRule
-from medspacy.target_matcher import TargetMatcher
 from pathlib import Path
 
 from functions import (
     classify_cancer_samples,
-    medspacy_classify_batch,  # New batch function
+    medspacy_classify_batch,
     clean_texts,
     resolve_uncertain,
     initialize_medspacy_pipeline,
     generate_disease_rules,
     get_nlp,
-    get_default_target_rules
+    get_default_target_rules,
+    PRIORITY_COLS,
 )
 
 
@@ -23,8 +21,6 @@ if __name__ == "__main__":
     
     # Step 1: Get the default rules
     cancer_rules, non_cancer_rules = get_default_target_rules()
-    
-    # Combine them into a single list for existing_rules
     existing_rules = cancer_rules + non_cancer_rules
     
     # Step 2: Initialize the pipeline with these rules
@@ -39,26 +35,21 @@ if __name__ == "__main__":
         infer_schema_length=0,
     )
 
-    # all_samples = all_samples.slice(0, 100)
+    all_samples = all_samples.slice(0, 100)
 
     print(f"\nTotal samples loaded: {len(all_samples)}")
 
     unique_diseases = all_samples.select("disease").unique().to_series().to_list()
-
-    # Generate and add disease-specific rules
     auto_rules, skipped = generate_disease_rules(unique_diseases, nlp, existing_rules)
     
     if auto_rules:
         tm = nlp.get_pipe("medspacy_target_matcher")
         tm.add(auto_rules)
         print(f"Added {len(auto_rules)} auto-generated disease rules")
-        if skipped:
-            print(f"Skipped {len(skipped)} duplicate literals")
 
     # Step 4: Do initial prediction with regex-based classifier
     predicted_df = classify_cancer_samples(all_samples)
 
-    # Print regex classification summary
     print("\n=== Regex Classification Summary ===")
     regex_summary = (
         predicted_df
@@ -80,8 +71,7 @@ if __name__ == "__main__":
     print(f"\n=== Medspacy Processing ===")
     print(f"Samples requiring medspacy analysis: {len(uncertain_df)}")
 
-    # Step 6: Process uncertain samples with medspacy (BATCHED)
-    # Prepare all texts upfront
+    # Step 6: Process uncertain samples with medspacy (BATCHED, FLAT OUTPUT)
     all_texts = []
     for row in uncertain_df.iter_rows(named=True):
         texts = clean_texts(row)
@@ -89,129 +79,96 @@ if __name__ == "__main__":
     
     print(f"Processing {len(all_texts)} samples in batches...")
     
-    # Use batch processing
-    results = medspacy_classify_batch(all_texts, nlp, batch_size=64)
+    # Get flat lists back
+    med_labels, med_reasons = medspacy_classify_batch(all_texts, nlp, batch_size=64)
     
-    # Count results
-    cancer_detected = sum(r["label"] == "CANCER" for r in results)
-    not_cancer_detected = sum(r["label"] == "NOT_CANCER" for r in results)
-    no_signal = sum(r["label"] == "NO_SIGNAL" for r in results)
-    uncertain = sum(r["label"] == "UNCERTAIN" for r in results)
+    # Add as flat columns
+    uncertain_df = uncertain_df.with_columns([
+        pl.Series("med_label", med_labels),
+        pl.Series("med_reason", med_reasons),
+    ])
 
+    # Stats
     print(f"\n=== Medspacy Results ===")
-    print(f"CANCER detected: {cancer_detected}")
-    print(f"NOT_CANCER detected: {not_cancer_detected}")
-    print(f"NO_SIGNAL: {no_signal}")
-    print(f"UNCERTAIN: {uncertain}")
-
-    # Add medspacy results to uncertain_df
-    uncertain_df = uncertain_df.with_columns(
-        pl.Series("medspacy_detected_cancer", results)
-    )
+    print(f"CANCER detected: {med_labels.count('CANCER')}")
+    print(f"NOT_CANCER detected: {med_labels.count('NOT_CANCER')}")
+    print(f"NO_SIGNAL: {med_labels.count('NO_SIGNAL')}")
+    print(f"UNCERTAIN: {med_labels.count('UNCERTAIN')}")
 
     # Step 7: Join medspacy results back to main dataframe
-    # Use a unique identifier for joining (adjust based on your data)
     uncertain_df = uncertain_df.unique(subset=["run_accession"], keep="first")
 
     predicted_df = predicted_df.join(
-        uncertain_df.select(["run_accession", "medspacy_detected_cancer"]),
-        on=["run_accession"],
+        uncertain_df.select(["run_accession", "med_label", "med_reason"]),
+        on="run_accession",
         how="left",
     )
 
-    # Step 8: Create final classification using resolve_uncertain
-    predicted_df = predicted_df.with_columns(
-        pl.struct(["confidence_category", "medspacy_detected_cancer"]).map_elements(
-            lambda row: resolve_uncertain(
-                row["confidence_category"],
-                row["medspacy_detected_cancer"]
-            ),
-            return_dtype=pl.Struct([
-                pl.Field("final_label", pl.Utf8),
-                pl.Field("regex_label", pl.Utf8),
-                pl.Field("med_label", pl.Utf8),
-                pl.Field("regex_reason", pl.Utf8),
-                pl.Field("med_reason", pl.Utf8),
-            ])
-        ).alias("final_classification")
-    )
+    # Fill NULLs for rows that weren't processed by medspacy
+    predicted_df = predicted_df.with_columns([
+        pl.col("med_label").fill_null(""),
+        pl.col("med_reason").fill_null(""),
+    ])
 
-    predicted_df = predicted_df.with_columns(
-        pl.col("final_classification").struct.field("final_label").alias("final_label")
-    )
+    # Step 8: Resolve final classification (FLAT)
+    # Process row by row and collect results
+    final_labels = []
+    regex_labels = []
+    med_labels_out = []
+    regex_reasons = []
+    med_reasons_out = []
+
+    for row in predicted_df.iter_rows(named=True):
+        result = resolve_uncertain(
+            regex_label=row["confidence_category"],
+            med_label=row["med_label"],
+            regex_reason=row.get("decision_reason", ""),
+            med_reason=row["med_reason"],
+        )
+        final_labels.append(result[0])
+        regex_labels.append(result[1])
+        med_labels_out.append(result[2])
+        regex_reasons.append(result[3])
+        med_reasons_out.append(result[4])
+
+    # Add all flat columns at once
+    predicted_df = predicted_df.with_columns([
+        pl.Series("final_label", final_labels),
+        pl.Series("regex_label", regex_labels),
+        # med_label already exists from join, but we can update if needed
+        pl.Series("regex_reason", regex_reasons),
+        # med_reason already exists from join
+    ])
 
     # Step 9: Display results
     print("\n=== Final Classification Summary ===")
     final_summary = (
         predicted_df
-        .group_by("final_classification")
+        .group_by("final_label")
         .agg(pl.count().alias("count"))
         .sort("count", descending=True)
     )
     print(final_summary)
 
-    # Define columns to keep (including run_accession)
-    # cols_to_keep = [
-    #     "run_accession",
-    #     "experiment_alias",
-    #     "bioproject",
-    #     "source_name",
-    #     "tissue",
-    #     "phenotype",
-    #     "disease",
-    #     "tumor_type",
-    #     "cell_type",
-    #     "cancer_type",
-    #     "final_classification",
-    #     "medspacy_detected_cancer"
-    # ]
+    # Define columns to keep
     cols_to_keep = [
         "run_accession", "experiment_alias", "bioproject",
         "source_name", "tissue", "phenotype", "disease", "cell_type", "tumor_type",
         "sample_name", "condition", "tumor", "cell_type.2", "cell_type.3",
         "celltype", "tissue_type", "health_state", "tissue_cell_type_source",
         "source", "model", "tissue_cell_type", "cell_types", "cancer_type",
-        "final_label",  # <-- flattened
-        "regex_label",
-        "med_label",
-        "regex_reason",
-        "med_reason"
+        "final_label", "regex_label", "med_label", "regex_reason", "med_reason",
     ]
+    
+    # Filter to only existing columns
+    cols_to_keep = [c for c in cols_to_keep if c in predicted_df.columns]
 
-    print("\n=== Sample Results ===")
-    # TODO: fix this, make this happen upstream, so maybe don't store stuff in a struct in classify_cancer_samples
-    # --- Fix NULL medspacy_detected_cancer rows (must happen BEFORE flattening) ---
-    predicted_df = predicted_df.with_columns([
-        pl.when(pl.col("medspacy_detected_cancer").is_null())
-        .then(pl.struct([
-            pl.lit("").alias("label"),
-            pl.lit("").alias("reason"),
-        ]))
-        .otherwise(pl.col("medspacy_detected_cancer"))
-        .alias("medspacy_detected_cancer")
-    ])
-
-    # --- Flatten final_classification ---
-    predicted_df = predicted_df.with_columns([
-        pl.col("final_classification").struct.field("final_label").alias("final_label"),
-        pl.col("final_classification").struct.field("regex_label").alias("regex_label"),
-        pl.col("final_classification").struct.field("med_label").alias("med_label"),
-        pl.col("final_classification").struct.field("regex_reason").alias("regex_reason"),
-        pl.col("final_classification").struct.field("med_reason").alias("med_reason"),
-    ]).drop("final_classification")
-
-    # --- Flatten medspacy_detected_cancer ---
-    predicted_df = predicted_df.with_columns([
-        pl.col("medspacy_detected_cancer").struct.field("label").alias("med_label2"),
-        pl.col("medspacy_detected_cancer").struct.field("reason").alias("med_reason2"),
-    ]).drop("medspacy_detected_cancer")
-
-    # Step 10: Export minimal CSV to outputs folder
+    # Step 10: Export
     output_file = output_dir / "classified_samples.csv"
     predicted_df.select(cols_to_keep).write_csv(output_file)
     print(f"\n✓ Exported full results to: {output_file}")
 
-    # Step 11: Filter for specific classifications if needed
+    # Step 11: Export confirmed_by_medspacy subset
     predicted_df_filtered = (
         predicted_df
         .filter(pl.col("final_label") == "confirmed_by_medspacy")
@@ -221,7 +178,6 @@ if __name__ == "__main__":
     print(f"\n=== Confirmed by medspacy ({len(predicted_df_filtered)} samples) ===")
     print(predicted_df_filtered.head(20))
     
-    # Export confirmed_by_medspacy subset
     confirmed_output = output_dir / "confirmed_by_medspacy.csv"
     predicted_df_filtered.write_csv(confirmed_output)
     print(f"✓ Exported medspacy-confirmed results to: {confirmed_output}")
