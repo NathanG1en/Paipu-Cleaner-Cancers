@@ -310,7 +310,7 @@ def clean_texts(row, priority_cols=PRIORITY_COLS):
     # * instead of ["source_name", ... "cell_type"]
     texts = [
         str(row[col]).strip()
-        for col in ["source_name", "tissue", "phenotype", "disease", "tumor_type", "cell_type"]
+        for col in PRIORITY_COLS
         if col in row and row[col] not in (None, "None", "nan", "NaN", "", "null")
     ]
     return texts
