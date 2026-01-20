@@ -7,32 +7,70 @@ import polars as pl
 import medspacy
 from medspacy.ner import TargetRule
 from medspacy.target_matcher import TargetMatcher
+from typing import Tuple
 
-# so I don't repeat it
+# Update PRIORITY_COLS to match the config
 PRIORITY_COLS = [
-    "source_name", "tissue", "phenotype", "disease", "cell_type", "tumor_type",
-    "sample_name", "condition", "tumor", "cell_type.2", "cell_type.3", 
-    "celltype", "tissue_type", "health_state", "tissue_cell_type_source", 
-    "source", "model", "tissue_cell_type", "cell_types"
+    "source_name", "tissue", "phenotype", "disease", 
+    "cell_type", "tumor_type", "cancer_type"
 ]
 
 
-def classify_cancer_samples(df: pl.DataFrame, PRIORITY_COLS=PRIORITY_COLS) -> pl.DataFrame:
+def clean_texts(
+    row: dict,
+    priority_cols: list[str] | None = None,
+    use_normalized: bool = False,
+) -> list[tuple[str, str]]:
+    """
+    Extract non-null texts from row along with their source column names.
+    
+    Args:
+        row: Dict-like row from DataFrame
+        priority_cols: Columns to extract from. Defaults to module-level PRIORITY_COLS.
+        use_normalized: If True, look for _norm suffix columns first.
+    
+    Returns:
+        List of (text, column_name) tuples
+    """
+    if priority_cols is None:
+        priority_cols = PRIORITY_COLS
+    
+    results = []
+    for col in priority_cols:
+        # Try normalized version first if requested
+        lookup_col = f"{col}_norm" if use_normalized and f"{col}_norm" in row else col
+        
+        if lookup_col in row:
+            val = row[lookup_col]
+            if val not in (None, "None", "nan", "NaN", "", "null"):
+                # Use original column name for provenance tracking
+                results.append((str(val).strip(), col))
+    
+    return results
+
+
+def classify_cancer_samples(
+    df: pl.DataFrame,
+    use_normalized: bool = False,
+) -> pl.DataFrame:
     """
     Classify samples as cancer / non-cancer / uncertain based on metadata text patterns.
     Returns the same DataFrame with added classification columns.
+    
+    Args:
+        df: Input DataFrame
+        use_normalized: If True, use pre-normalized _norm columns (faster)
     """
-
-    # --- Step 1: Setup --- look
-    PRIORITY_COLS = [c for c in PRIORITY_COLS if c in df.columns]
-
+    # --- Step 1: Setup ---
+    priority_cols = [c for c in PRIORITY_COLS if c in df.columns]
+    
     # Regex patterns
     CANCER_POS = r"(?:\bcancers?\b|\btumou?rs?\b|\bmalignan(?:t|cy)\b|\bcarcinomas?\b|\bneoplasms?\b|\bmetasta(?:s|t)es?\b|\badenocarcinomas?\b|\bsarcomas?\b|\bleukemi(?:a|as)\b|\blymphom(?:a|as)\b|\bglioblastomas?\b|\bmelanomas?\b|\boncolog(?:y|ic|ical)\b)"
     CANCER_NEG = r"(?:\bnormal\b|\bhealthy\b|\bctrl\b|\badjacent normal\b|\bnon[-\s]?tumou?r(?:al)?\b|\bbenign\b|\bnon[-\s]?cancer(?:ous)?\b|\bsham\b|\bunaffected\b)"
     ONCO_TRAPS = r"(?:\boncophora\b|\boncorhynchus\b|\boncotic\b|\boncomodulin\b)"
 
-    # Helper to normalize text columns
     def normalize_text(col_expr):
+        """Normalize text - only needed if not using pre-normalized columns."""
         return (
             col_expr.cast(pl.Utf8)
             .fill_null("")
@@ -41,54 +79,40 @@ def classify_cancer_samples(df: pl.DataFrame, PRIORITY_COLS=PRIORITY_COLS) -> pl
             .str.replace_all(r"\s+", " ")
             .str.strip_chars()
         )
-    # TODO: change this variable name
+
+    def get_text_col(col_name: str) -> pl.Expr:
+        """Get the appropriate column expression (normalized or raw)."""
+        norm_col = f"{col_name}_norm"
+        if use_normalized and norm_col in df.columns:
+            # Already normalized, just use it directly
+            return pl.col(norm_col)
+        else:
+            # Normalize on the fly
+            return normalize_text(pl.col(col_name))
+
     # --- Step 2: Sample name detection ---
     sample_name_col = "title" if "title" in df.columns else "biosample"
-
+    
     df = df.with_columns([
-        normalize_text(pl.col(sample_name_col)).str.contains(CANCER_POS).alias("cancer_in_sample_name"),
-        normalize_text(pl.col(sample_name_col)).str.contains(CANCER_NEG).alias("negative_in_sample_name"),
-        normalize_text(pl.col(sample_name_col)).str.contains(ONCO_TRAPS).alias("onco_trap_in_sample_name"),
+        get_text_col(sample_name_col).str.contains(CANCER_POS).alias("cancer_in_sample_name"),
+        get_text_col(sample_name_col).str.contains(CANCER_NEG).alias("negative_in_sample_name"),
+        get_text_col(sample_name_col).str.contains(ONCO_TRAPS).alias("onco_trap_in_sample_name"),
     ])
 
     # --- Step 3: Check priority columns ---
-    for col in PRIORITY_COLS:
+    for col in priority_cols:
         df = df.with_columns([
-            normalize_text(pl.col(col)).str.contains(CANCER_POS).alias(f"cancer_in_{col}"),
-            normalize_text(pl.col(col)).str.contains(CANCER_NEG).alias(f"negative_in_{col}"),
+            get_text_col(col).str.contains(CANCER_POS).alias(f"cancer_in_{col}"),
+            get_text_col(col).str.contains(CANCER_NEG).alias(f"negative_in_{col}"),
         ])
 
     # --- Step 4: Count mentions ---
-    cancer_mention_cols = [f"cancer_in_{c}" for c in PRIORITY_COLS]
-    negative_mention_cols = [f"negative_in_{c}" for c in PRIORITY_COLS]
+    cancer_mention_cols = [f"cancer_in_{c}" for c in priority_cols]
+    negative_mention_cols = [f"negative_in_{c}" for c in priority_cols]
 
     df = df.with_columns([
         pl.sum_horizontal([pl.col(c) for c in cancer_mention_cols if c in df.columns]).alias("n_cancer_mentions"),
         pl.sum_horizontal([pl.col(c) for c in negative_mention_cols if c in df.columns]).alias("n_negative_mentions"),
-    ])
-
-    # --- Step 4.5: Collect evidence ---
-    def collect_evidence(row):
-        cancer_hits = []
-        non_hits = []
-
-        for col in PRIORITY_COLS:
-            if row.get(f"cancer_in_{col}", False):
-                cancer_hits.append(col)
-            if row.get(f"negative_in_{col}", False):
-                non_hits.append(col)
-
-        # sample_name fields
-        if row.get("cancer_in_sample_name", False):
-            cancer_hits.append(sample_name_col)
-        if row.get("negative_in_sample_name", False):
-            non_hits.append(sample_name_col)
-
-        return cancer_hits, non_hits
-
-    df = df.with_columns([
-        pl.struct(df.columns).map_elements(lambda r: collect_evidence(r)[0]).alias("cancer_evidence"),
-        pl.struct(df.columns).map_elements(lambda r: collect_evidence(r)[1]).alias("negative_evidence"),
     ])
 
     # --- Step 5: Confidence category ---
@@ -117,65 +141,21 @@ def classify_cancer_samples(df: pl.DataFrame, PRIORITY_COLS=PRIORITY_COLS) -> pl
         .alias("confidence_category")
     ])
 
-    # --- Step 5.5: Normalize evidence list columns ---
-    df = df.with_columns([
-        # Replace NULL with []
-        pl.when(pl.col("cancer_evidence").is_null())
-        .then(pl.lit([]))
-        .otherwise(pl.col("cancer_evidence"))
-        .alias("cancer_evidence"),
-
-        pl.when(pl.col("negative_evidence").is_null())
-        .then(pl.lit([]))
-        .otherwise(pl.col("negative_evidence"))
-        .alias("negative_evidence"),
-    ])
-
-    # Ensure all elements inside the lists are strings
-    df = df.with_columns([
-        pl.col("cancer_evidence").list.eval(
-            pl.when(pl.element().is_null())
-            .then(pl.lit(""))
-            .otherwise(pl.element().cast(pl.Utf8))
-        ).alias("cancer_evidence"),
-
-        pl.col("negative_evidence").list.eval(
-            pl.when(pl.element().is_null())
-            .then(pl.lit(""))
-            .otherwise(pl.element().cast(pl.Utf8))
-        ).alias("negative_evidence"),
-    ])
-
-    # --- Step 6: Decision explanation ---
-    def build_decision_reason(row):
-        cancer_hits = []
-        non_hits = []
-
-        for col in PRIORITY_COLS:
-            if row.get(f"cancer_in_{col}", False):
-                cancer_hits.append(col)
-            if row.get(f"negative_in_{col}", False):
-                non_hits.append(col)
-
-        if row.get("cancer_in_sample_name", False):
-            cancer_hits.append(sample_name_col)
-        if row.get("negative_in_sample_name", False):
-            non_hits.append(sample_name_col)
-
-        if cancer_hits:
-            return f"Cancer terms detected in: {', '.join(cancer_hits)}"
-        elif non_hits:
-            return f"Non-cancer terms detected in: {', '.join(non_hits)}"
-        else:
-            return "No cancer-related terms detected"
-
-    df = df.with_columns([
-        pl.struct(df.columns)
-          .map_elements(build_decision_reason, return_dtype=pl.Utf8)
-          .alias("decision_reason")
-    ])
-
     return df
+import polars as pl
+import medspacy
+from medspacy.ner import TargetRule
+from medspacy.target_matcher import TargetMatcher
+from typing import Tuple
+
+# so I don't repeat it
+PRIORITY_COLS = [
+    "source_name", "tissue", "phenotype", "disease", "cell_type", "tumor_type",
+    "sample_name", "condition", "tumor", "cell_type.2", "cell_type.3", 
+    "celltype", "tissue_type", "health_state", "tissue_cell_type_source", 
+    "source", "model", "tissue_cell_type", "cell_types"
+]
+
 
 
 def medspacy_classify(row_texts, nlp_pipeline=None):
@@ -219,12 +199,16 @@ def medspacy_classify(row_texts, nlp_pipeline=None):
         return "NO_SIGNAL"
 
 
-def medspacy_classify_batch(all_row_texts: list[list[str]], nlp_pipeline=None, batch_size: int = 32) -> tuple[list[str], list[str]]:
+def medspacy_classify_batch(
+    all_row_texts: list[list[tuple[str, str]]], 
+    nlp_pipeline=None, 
+    batch_size: int = 32
+) -> tuple[list[str], list[str]]:
     """
-    Batch process multiple rows of texts with MedSpacy.
+    Batch process multiple rows of (text, column_name) pairs with MedSpacy.
     
     Args:
-        all_row_texts: List of text lists, one per row
+        all_row_texts: List of [(text, col_name), ...] per row
         nlp_pipeline: MedSpacy pipeline (uses global if None)
         batch_size: Number of rows to process at once
         
@@ -249,9 +233,9 @@ def medspacy_classify_batch(all_row_texts: list[list[str]], nlp_pipeline=None, b
             cancer_found = False
             non_cancer_found = False
             negation_found = False
-            detected_terms = []
+            detected_terms = []  # Will store "term (column)" strings
             
-            for text in row_texts:
+            for text, col_name in row_texts:
                 if not text or not text.strip():
                     continue
                 doc = nlp_pipeline(text)
@@ -259,14 +243,14 @@ def medspacy_classify_batch(all_row_texts: list[list[str]], nlp_pipeline=None, b
                     if ent.label_ == "CANCER":
                         if ent._.is_negated:
                             negation_found = True
-                            detected_terms.append(f"negated:{ent.text}")
+                            detected_terms.append(f"negated:{ent.text} ({col_name})")
                         else:
                             cancer_found = True
-                            detected_terms.append(ent.text)
+                            detected_terms.append(f"{ent.text} ({col_name})")
                     elif ent.label_ == "NON_CANCER":
                         if not ent._.is_negated:
                             non_cancer_found = True
-                            detected_terms.append(f"non-cancer:{ent.text}")
+                            detected_terms.append(f"non-cancer:{ent.text} ({col_name})")
             
             # Decision logic
             if cancer_found and not negation_found:
@@ -287,20 +271,6 @@ def medspacy_classify_batch(all_row_texts: list[list[str]], nlp_pipeline=None, b
     
     return labels, reasons
 
-
-def clean_texts(row, priority_cols=PRIORITY_COLS):
-    """
-    Extract and clean text fields from a row dictionary.
-    Returns a list of non-empty strings.
-    """
-    # TODO: look at this and possibly add PRIORITY_COLS, could add more complexity for no reason
-    # * instead of ["source_name", ... "cell_type"]
-    texts = [
-        str(row[col]).strip()
-        for col in PRIORITY_COLS
-        if col in row and row[col] not in (None, "None", "nan", "NaN", "", "null")
-    ]
-    return texts
 
 
 def resolve_uncertain(
@@ -359,7 +329,7 @@ def resolve_uncertain(
     return (final, regex_label, med_label, regex_reason, med_reason)
 
 
-
+# TODO: add "non" to negated
 def get_default_target_rules():
     """
     Returns the default cancer and non-cancer target rules.
@@ -631,6 +601,7 @@ def generate_disease_rules(unique_diseases, nlp, existing_rules):
         "blastoma",
         "myeloma",
         "metast",
+        "thelioma"
     )
 
     _skip_literals = {rule.literal.lower() for rule in existing_rules}
@@ -693,3 +664,184 @@ def get_nlp():
     if nlp is None:
         nlp = initialize_medspacy_pipeline()
     return nlp
+
+# ============================================================================
+# TEXT PREPROCESSING - Column Discovery & Normalization
+# ============================================================================
+
+def identify_candidate_text_columns(
+    df: pl.DataFrame,
+    min_avg_length: float = 10.0,
+    min_non_null_pct: float = 0.01,
+    exclude_patterns: list[str] | None = None,
+) -> list[str]:
+    """
+    Step 1: Identify candidate text columns using cheap heuristics.
+    
+    Filters 1000 columns → ~50-150 candidates based on:
+    - dtype is string/Utf8
+    - average string length > threshold
+    - % non-null above threshold
+    
+    Args:
+        df: Input DataFrame
+        min_avg_length: Minimum average string length to consider (default 10 chars)
+        min_non_null_pct: Minimum fraction of non-null values (default 1%)
+        exclude_patterns: Column name patterns to exclude (e.g., ['_id', 'accession'])
+    
+    Returns:
+        List of candidate column names suitable for text analysis
+    """
+    if exclude_patterns is None:
+        exclude_patterns = ["_id", "accession", "uuid", "hash", "checksum", "md5", "sha"]
+    
+    candidates = []
+    n_rows = len(df)
+    
+    for col in df.columns:
+        # Skip non-string columns
+        if df[col].dtype != pl.Utf8:
+            continue
+        
+        # Skip columns matching exclude patterns
+        col_lower = col.lower()
+        if any(pattern in col_lower for pattern in exclude_patterns):
+            continue
+        
+        # Calculate non-null percentage
+        non_null_count = df[col].drop_nulls().len()
+        non_null_pct = non_null_count / n_rows if n_rows > 0 else 0
+        
+        if non_null_pct < min_non_null_pct:
+            continue
+        
+        # Calculate average string length (on non-null values)
+        avg_length = (
+            df.select(
+                pl.col(col)
+                .drop_nulls()
+                .str.len_chars()
+                .mean()
+            )
+            .item()
+        )
+        
+        if avg_length is None or avg_length < min_avg_length:
+            continue
+        
+        candidates.append(col)
+    
+    return candidates
+
+
+def normalize_text_column(col_expr: pl.Expr) -> pl.Expr:
+    """
+    Step 2: Normalize text aggressively for a single column expression.
+    
+    Transformations:
+    - Cast to string
+    - Fill nulls with empty string
+    - Lowercase
+    - Strip punctuation (except hyphens within words)
+    - Collapse whitespace
+    - Strip leading/trailing whitespace
+    
+    Args:
+        col_expr: Polars column expression
+    
+    Returns:
+        Normalized column expression
+    """
+    return (
+        col_expr.cast(pl.Utf8)
+        .fill_null("")
+        .str.to_lowercase()
+        .str.replace_all(r"[_/|\\]", " ")  # Replace common separators with space
+        .str.replace_all(r"[^\w\s\-]", "")  # Remove punctuation (keep hyphens)
+        .str.replace_all(r"\s+", " ")  # Collapse whitespace
+        .str.strip_chars()
+    )
+
+
+def preprocess_text_columns(
+    df: pl.DataFrame,
+    columns: list[str] | None = None,
+    suffix: str = "_normalized",
+    min_avg_length: float = 10.0,
+    min_non_null_pct: float = 0.01,
+) -> Tuple[pl.DataFrame, list[str]]:
+    """
+    Full text preprocessing pipeline: discover candidates + normalize.
+    
+    Args:
+        df: Input DataFrame
+        columns: Specific columns to normalize. If None, auto-discovers candidates.
+        suffix: Suffix for normalized column names (default "_normalized")
+        min_avg_length: For auto-discovery, minimum average string length
+        min_non_null_pct: For auto-discovery, minimum non-null percentage
+    
+    Returns:
+        Tuple of:
+        - DataFrame with normalized columns added
+        - List of normalized column names
+    """
+    # Step 1: Identify candidates if not specified
+    if columns is None:
+        columns = identify_candidate_text_columns(
+            df, 
+            min_avg_length=min_avg_length,
+            min_non_null_pct=min_non_null_pct
+        )
+    else:
+        # Filter to only existing columns
+        columns = [c for c in columns if c in df.columns]
+    
+    if not columns:
+        return df, []
+    
+    # Step 2: Normalize all candidate columns
+    normalized_cols = []
+    for col in columns:
+        norm_col_name = f"{col}{suffix}"
+        df = df.with_columns(
+            normalize_text_column(pl.col(col)).alias(norm_col_name)
+        )
+        normalized_cols.append(norm_col_name)
+    
+    return df, normalized_cols
+
+
+def get_text_column_stats(df: pl.DataFrame) -> pl.DataFrame:
+    """
+    Utility: Get statistics for all string columns to help tune thresholds.
+    
+    Returns DataFrame with columns:
+    - column_name
+    - dtype
+    - non_null_count
+    - non_null_pct
+    - avg_length
+    - max_length
+    - unique_count
+    """
+    stats = []
+    n_rows = len(df)
+    
+    for col in df.columns:
+        if df[col].dtype != pl.Utf8:
+            continue
+        
+        col_data = df[col].drop_nulls()
+        non_null_count = col_data.len()
+        
+        stats.append({
+            "column_name": col,
+            "dtype": str(df[col].dtype),
+            "non_null_count": non_null_count,
+            "non_null_pct": round(non_null_count / n_rows * 100, 2) if n_rows > 0 else 0,
+            "avg_length": round(col_data.str.len_chars().mean() or 0, 1),
+            "max_length": col_data.str.len_chars().max() or 0,
+            "unique_count": col_data.n_unique(),
+        })
+
+        return pl.DataFrame(stats).sort("avg_length", descending=True)
