@@ -588,27 +588,103 @@ def generate_disease_rules(unique_diseases, nlp, existing_rules):
     """
     Auto-generate TargetRules for a list of unique diseases.
     Returns a list of new TargetRule objects.
+
+    Extension point:
+        - ontology_id (ICD-10 / SNOMED / MeSH) can be added later
+          without changing matching logic.
     """
+
+    # Expanded, high-recall cancer keywords
+    # Use * suffix to indicate prefix / regex match
     KEYWORDS_CANCER = (
+        # Core malignancy
         "cancer",
-        "carcinoma",
-        "sarcoma",
-        "leuk",
-        "lymphoma",
+        "malign*",
+        "malignant",
+        "neoplasm",
+        "neoplastic",
+        "oncolog*",
+        "oncogen*",
+
+        # Tumor morphology
         "tumor",
         "tumour",
-        "melanoma",
+        "carcinoma",
+        "adenocarcinoma",
+        "squamous cell carcinoma",
+        "basal cell carcinoma",
+        "sarcoma",
+        "osteosarcoma",
+        "chondrosarcoma",
+        "liposarcoma",
+        "glioma",
+        "astrocytoma",
+        "oligodendroglioma",
         "blastoma",
+        "neuroblastoma",
+        "retinoblastoma",
+        "melanoma",
+        "mesothelioma",
+        "thelioma",
         "myeloma",
-        "metast",
-        "thelioma"
+        "plasmacytoma",
+
+        # Hematologic
+        "leuk*",
+        "leukemia",
+        "lymphoma",
+        "hodgkin",
+        "non hodgkin",
+        "myelodysplastic",
+        "myeloproliferative",
+
+        # Organ-specific (common)
+        "breast cancer",
+        "lung cancer",
+        "colon cancer",
+        "colorectal cancer",
+        "prostate cancer",
+        "pancreatic cancer",
+        "hepatic cancer",
+        "hepatocellular carcinoma",
+        "renal cancer",
+        "kidney cancer",
+        "bladder cancer",
+        "ovarian cancer",
+        "cervical cancer",
+        "endometrial cancer",
+        "thyroid cancer",
+        "brain tumor",
+        "cns tumor",
+
+        # Progression / severity
+        "metast*",
+        "metastatic",
+        "metastasis",
+        "invasive",
+        "advanced cancer",
+        "recurrent",
+        "relapsed",
+        "progression",
     )
 
     _skip_literals = {rule.literal.lower() for rule in existing_rules}
 
     def _phrase_to_pattern(phrase: str):
+        """
+        Converts a phrase into a spaCy Matcher pattern.
+        Supports:
+            - exact token matches
+            - prefix matching via '*' suffix
+        """
+        # Prefix / regex rule
+        if phrase.endswith("*"):
+            prefix = phrase[:-1]
+            return [{"LOWER": {"REGEX": f"^{prefix}"}}]
+
         doc = nlp.make_doc(phrase.lower())
         pattern = []
+
         for token in doc:
             if token.is_space:
                 continue
@@ -616,11 +692,11 @@ def generate_disease_rules(unique_diseases, nlp, existing_rules):
                 pattern.append({"LOWER": token.lower_})
             elif token.is_digit:
                 pattern.append({"LIKE_NUM": True})
-            elif token.is_punct:
-                pattern.append({"TEXT": token.text})
             else:
-                pattern.append({"LOWER": token.lower_})
+                pattern.append({"TEXT": token.text})
+
         return pattern
+
 
     auto_rules = []
     skipped_literals = []
@@ -640,7 +716,7 @@ def generate_disease_rules(unique_diseases, nlp, existing_rules):
             continue
         category = (
             "CANCER"
-            if any(keyword in norm_literal for keyword in KEYWORDS_CANCER)
+            if any(kw.rstrip("*") in norm_literal for kw in KEYWORDS_CANCER)
             else "NON_CANCER"
         )
         auto_rules.append(
@@ -651,7 +727,7 @@ def generate_disease_rules(unique_diseases, nlp, existing_rules):
             )
         )
 
-    return auto_rules, skipped_literals
+    return auto_rules, skipped_literals  # <-- Make sure this exists!
 
 
 # Global nlp instance (initialize once when module is imported)
