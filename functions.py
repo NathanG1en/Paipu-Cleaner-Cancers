@@ -51,96 +51,83 @@ def clean_texts(
 
 def classify_cancer_samples(
     df: pl.DataFrame,
+    nlp_pipeline=None,
+    batch_size: int = 64,
     use_normalized: bool = False,
 ) -> pl.DataFrame:
     """
-    Classify samples as cancer / non-cancer / uncertain based on metadata text patterns.
-    Returns the same DataFrame with added classification columns.
+    Classify samples as cancer / non-cancer / uncertain using MedSpaCy NLP.
+    No regex - uses entity recognition and context detection.
     
     Args:
-        df: Input DataFrame
-        use_normalized: If True, use pre-normalized _norm columns (faster)
+        df: Input DataFrame with text columns
+        nlp_pipeline: MedSpaCy pipeline (uses global if None)
+        batch_size: Batch size for processing
+        use_normalized: If True, looks for pre-normalized columns (col_norm)
+        
+    Returns:
+        DataFrame with added classification columns:
+        - med_label: CANCER, NOT_CANCER, UNCERTAIN, NO_SIGNAL
+        - med_reason: Explanation of classification
+        - confidence_category: Mapped category for compatibility
     """
-    # --- Step 1: Setup ---
+    if nlp_pipeline is None:
+        nlp_pipeline = get_nlp()
+    
+    # Determine which columns to analyze
     priority_cols = [c for c in PRIORITY_COLS if c in df.columns]
     
-    # Regex patterns
-    CANCER_POS = r"(?:\bcancers?\b|\btumou?rs?\b|\bmalignan(?:t|cy)\b|\bcarcinomas?\b|\bneoplasms?\b|\bmetasta(?:s|t)es?\b|\badenocarcinomas?\b|\bsarcomas?\b|\bleukemi(?:a|as)\b|\blymphom(?:a|as)\b|\bglioblastomas?\b|\bmelanomas?\b|\boncolog(?:y|ic|ical)\b)"
-    CANCER_NEG = r"(?:\bnormal\b|\bhealthy\b|\bctrl\b|\badjacent normal\b|\bnon[-\s]?tumou?r(?:al)?\b|\bbenign\b|\bnon[-\s]?cancer(?:ous)?\b|\bsham\b|\bunaffected\b)"
-    ONCO_TRAPS = r"(?:\boncophora\b|\boncorhynchus\b|\boncotic\b|\boncomodulin\b)"
-
-    def normalize_text(col_expr):
-        """Normalize text - only needed if not using pre-normalized columns."""
-        return (
-            col_expr.cast(pl.Utf8)
-            .fill_null("")
-            .str.to_lowercase()
-            .str.replace_all(r"[_/|]", " ")
-            .str.replace_all(r"\s+", " ")
-            .str.strip_chars()
-        )
-
-    def get_text_col(col_name: str) -> pl.Expr:
-        """Get the appropriate column expression (normalized or raw)."""
-        norm_col = f"{col_name}_norm"
-        if use_normalized and norm_col in df.columns:
-            # Already normalized, just use it directly
-            return pl.col(norm_col)
-        else:
-            # Normalize on the fly
-            return normalize_text(pl.col(col_name))
-
-    # --- Step 2: Sample name detection ---
+    # Add sample name column
     sample_name_col = "title" if "title" in df.columns else "biosample"
+    if sample_name_col in df.columns and sample_name_col not in priority_cols:
+        priority_cols = [sample_name_col] + priority_cols
     
+    # Collect text data for each row
+    all_row_texts = []
+    
+    for row in df.iter_rows(named=True):
+        row_texts = []
+        for col in priority_cols:
+            # Check for normalized version first if requested
+            if use_normalized:
+                norm_col = f"{col}_norm"
+                text = row.get(norm_col) or row.get(col)
+            else:
+                text = row.get(col)
+            
+            if text and isinstance(text, str) and text.strip() and text.lower() != "nan":
+                # Light normalization if not using pre-normalized
+                if not use_normalized:
+                    text = text.lower().replace("_", " ").replace("/", " ").replace("|", " ")
+                    text = " ".join(text.split())  # collapse whitespace
+                row_texts.append((text, col))
+        
+        all_row_texts.append(row_texts)
+    
+    # Batch classify with MedSpaCy
+    med_labels, med_reasons = medspacy_classify_batch(
+        all_row_texts, 
+        nlp_pipeline, 
+        batch_size=batch_size
+    )
+    
+    # Map med_labels to confidence categories for backward compatibility
+    label_to_confidence = {
+        "CANCER": "confident_cancer",
+        "NOT_CANCER": "likely_non_cancer", 
+        "UNCERTAIN": "uncertain_weak_signal",
+        "NO_SIGNAL": "uncertain_no_signal",
+    }
+    
+    confidence_categories = [label_to_confidence.get(lbl, "uncertain_no_signal") for lbl in med_labels]
+    
+    # Add results to dataframe
     df = df.with_columns([
-        get_text_col(sample_name_col).str.contains(CANCER_POS).alias("cancer_in_sample_name"),
-        get_text_col(sample_name_col).str.contains(CANCER_NEG).alias("negative_in_sample_name"),
-        get_text_col(sample_name_col).str.contains(ONCO_TRAPS).alias("onco_trap_in_sample_name"),
+        pl.Series("med_label", med_labels),
+        pl.Series("med_reason", med_reasons),
+        pl.Series("confidence_category", confidence_categories),
     ])
-
-    # --- Step 3: Check priority columns ---
-    for col in priority_cols:
-        df = df.with_columns([
-            get_text_col(col).str.contains(CANCER_POS).alias(f"cancer_in_{col}"),
-            get_text_col(col).str.contains(CANCER_NEG).alias(f"negative_in_{col}"),
-        ])
-
-    # --- Step 4: Count mentions ---
-    cancer_mention_cols = [f"cancer_in_{c}" for c in priority_cols]
-    negative_mention_cols = [f"negative_in_{c}" for c in priority_cols]
-
-    df = df.with_columns([
-        pl.sum_horizontal([pl.col(c) for c in cancer_mention_cols if c in df.columns]).alias("n_cancer_mentions"),
-        pl.sum_horizontal([pl.col(c) for c in negative_mention_cols if c in df.columns]).alias("n_negative_mentions"),
-    ])
-
-    # --- Step 5: Confidence category ---
-    df = df.with_columns([
-        pl.when(pl.col("onco_trap_in_sample_name"))
-        .then(pl.lit("uncertain_onco_trap"))
-        .when(
-            pl.col("cancer_in_sample_name") &
-            (pl.col("n_cancer_mentions") >= 1) &
-            (pl.col("n_negative_mentions") == 0)
-        )
-        .then(pl.lit("confident_cancer"))
-        .when(
-            (pl.col("cancer_in_sample_name") & (pl.col("n_negative_mentions") == 0)) |
-            (pl.col("n_cancer_mentions") >= 2)
-        )
-        .then(pl.lit("likely_cancer"))
-        .when(
-            pl.col("negative_in_sample_name") |
-            (pl.col("n_negative_mentions") >= 1)
-        )
-        .then(pl.lit("likely_non_cancer"))
-        .when(pl.col("n_cancer_mentions") == 1)
-        .then(pl.lit("uncertain_weak_signal"))
-        .otherwise(pl.lit("uncertain_no_signal"))
-        .alias("confidence_category")
-    ])
-
+    
     return df
 import polars as pl
 import medspacy
