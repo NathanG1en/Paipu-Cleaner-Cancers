@@ -46,6 +46,8 @@ if __name__ == "__main__":
         infer_schema_length=0,
     )
 
+    all_samples = all_samples.head(100)
+
     print(f"Total samples loaded: {len(all_samples)}")
     print(f"Total columns: {len(all_samples.columns)}")
 
@@ -154,9 +156,9 @@ if __name__ == "__main__":
 
     cols_to_keep = [c for c in cols_to_keep if c in predicted_df.columns]
 
-    output_file = output_dir / "classified_samples.csv"
-    predicted_df.select(cols_to_keep).write_csv(output_file)
-    print(f"\n✓ Exported full results to: {output_file}")
+    # output_file = output_dir / "classified_samples.csv"
+    # predicted_df.select(cols_to_keep).write_csv(output_file)
+    # print(f"\n✓ Exported full results to: {output_file}")
 
     # =========================================================================
     # Step 12: Export confirmed_by_medspacy subset
@@ -170,6 +172,6 @@ if __name__ == "__main__":
     print(f"\n=== Confirmed by medspacy ({len(predicted_df_filtered)} samples) ===")
     print(predicted_df_filtered.head(20))
 
-    confirmed_output = output_dir / "confirmed_by_medspacy.csv"
-    predicted_df_filtered.write_csv(confirmed_output)
-    print(f"✓ Exported medspacy-confirmed results to: {confirmed_output}")
+    # confirmed_output = output_dir / "confirmed_by_medspacy.csv"
+    # predicted_df_filtered.write_csv(confirmed_output)
+    # print(f"✓ Exported medspacy-confirmed results to: {confirmed_output}")
