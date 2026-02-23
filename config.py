@@ -6,13 +6,16 @@ a dataclass-based configuration system for the classification pipeline.
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, FrozenSet, Tuple
+from typing import Dict, FrozenSet, List, Tuple
 
 
 @dataclass(frozen=True)
 class ClassifierConfig:
     """
     Immutable configuration for the cancer classification pipeline.
+    
+    This is the single source of truth for column configuration,
+    used by both text preprocessing and classification functions.
     
     Attributes:
         priority_cols: Primary columns to search for cancer indicators.
@@ -47,6 +50,10 @@ class ClassifierConfig:
     
     # Processing settings
     batch_size: int = 64
+
+
+# Backward compatibility alias
+TextColumnConfig = ClassifierConfig
 
 
 @dataclass(frozen=True)
@@ -96,6 +103,77 @@ class LabelMapping:
         "uncertain_weak_signal": "UNCERTAIN",
         "uncertain_medspacy": "UNCERTAIN",
     })
+
+
+# =============================================================================
+# MedSpaCy Target Rule Definitions (data only, no TargetRule import)
+# =============================================================================
+# These are stored as tuples of (literal, category, pattern) to avoid
+# importing medspacy in the config module. The actual TargetRule objects
+# are created in functions.py using get_default_target_rules().
+
+CANCER_RULE_DEFINITIONS: List[Tuple[str, str, str]] = [
+    # General cancer terms: (literal, category, regex_pattern)
+    ("cancer", "CANCER", r"\bcancers?\b"),
+    ("tumor", "CANCER", r"\btumou?rs?\b"),
+    ("malignant", "CANCER", r"\bmalignan(?:t|cy)\b"),
+    ("carcinoma", "CANCER", r"\bcarcinomas?\b"),
+    ("neoplasm", "CANCER", r"\bneoplasms?\b"),
+    ("metastasis", "CANCER", r"\bmetasta(?:s|t)(?:is|es)?\b"),
+    ("adenocarcinoma", "CANCER_TYPE", r"\badenocarcinomas?\b"),
+    ("sarcoma", "CANCER_TYPE", r"\bsarcomas?\b"),
+    ("leukemia", "CANCER_TYPE", r"\bleuk[ae]mias?\b"),
+    ("lymphoma", "CANCER_TYPE", r"\blymphomas?\b"),
+    ("glioblastoma", "CANCER_TYPE", r"\bglioblastomas?\b"),
+    ("melanoma", "CANCER_TYPE", r"\bmelanomas?\b"),
+    ("myeloma", "CANCER_TYPE", r"\bmyelomas?\b"),
+    ("neuroblastoma", "CANCER_TYPE", r"\bneuroblastomas?\b"),
+    ("oncogenic", "CANCER", r"\boncogen(?:ic|e|es)\b"),
+    # Specific cancer types (literal match only, no pattern)
+    ("hepatocellular carcinoma", "CANCER_TYPE", ""),
+    ("breast cancer", "CANCER_TYPE", ""),
+    ("lung cancer", "CANCER_TYPE", ""),
+    ("colon cancer", "CANCER_TYPE", ""),
+    ("prostate cancer", "CANCER_TYPE", ""),
+    ("pancreatic cancer", "CANCER_TYPE", ""),
+    ("ovarian cancer", "CANCER_TYPE", ""),
+    ("bladder cancer", "CANCER_TYPE", ""),
+    ("skin cancer", "CANCER_TYPE", ""),
+    ("brain cancer", "CANCER_TYPE", ""),
+    ("liver cancer", "CANCER_TYPE", ""),
+    ("kidney cancer", "CANCER_TYPE", ""),
+    ("renal cell carcinoma", "CANCER_TYPE", ""),
+    ("squamous cell carcinoma", "CANCER_TYPE", ""),
+    ("basal cell carcinoma", "CANCER_TYPE", ""),
+    ("non-small cell lung cancer", "CANCER_TYPE", ""),
+    ("small cell lung cancer", "CANCER_TYPE", ""),
+    ("triple negative breast cancer", "CANCER_TYPE", ""),
+    ("HER2 positive", "CANCER_TYPE", ""),
+    ("ER positive", "CANCER_TYPE", ""),
+]
+
+NON_CANCER_RULE_DEFINITIONS: List[Tuple[str, str, str]] = [
+    # Non-cancer/control terms: (literal, category, regex_pattern)
+    ("normal", "NON_CANCER", r"\bnormal\b"),
+    ("healthy", "NON_CANCER", r"\bhealthy\b"),
+    ("control", "NON_CANCER", r"\b(?:ctrl|control)\b"),
+    ("benign", "NON_CANCER", r"\bbenign\b"),
+    ("non-tumor", "NON_CANCER", r"\bnon[-\s]?tumou?r(?:al)?\b"),
+    ("non-cancer", "NON_CANCER", r"\bnon[-\s]?cancer(?:ous)?\b"),
+    ("sham", "NON_CANCER", r"\bsham\b"),
+    ("unaffected", "NON_CANCER", r"\bunaffected\b"),
+    ("wild type", "NON_CANCER", r"\bwild[-\s]?type\b"),
+    ("WT", "NON_CANCER", r"\bWT\b"),
+    # Literal match only
+    ("adjacent normal", "NON_CANCER", ""),
+    ("tumor-adjacent normal", "NON_CANCER", ""),
+    ("matched normal", "NON_CANCER", ""),
+    # Onco-traps (false positives - species/proteins)
+    ("oncorhynchus", "NON_CANCER", r"\boncorhynchus\b"),
+    ("oncophora", "NON_CANCER", r"\boncophora\b"),
+    ("oncotic", "NON_CANCER", r"\boncotic\b"),
+    ("oncomodulin", "NON_CANCER", r"\boncomodulin\b"),
+]
 
 
 # =============================================================================

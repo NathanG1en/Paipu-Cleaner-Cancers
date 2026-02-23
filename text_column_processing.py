@@ -1,34 +1,9 @@
-# preprocessing.py - New dedicated module
+# text_column_processing.py - Text column preprocessing module
 
 import polars as pl
-from dataclasses import dataclass
-from typing import Optional
+from typing import Dict, List, Tuple
 
-
-@dataclass(frozen=True)
-class TextColumnConfig:
-    """Immutable configuration for text column tiers."""
-    # Tier 1: Always process - biologically meaningful
-    priority_cols: tuple[str, ...] = (
-        "source_name", "tissue", "phenotype", "disease", 
-        "cell_type", "tumor_type", "cancer_type"
-    )
-    
-    # Tier 2: Process if present and populated - secondary metadata
-    secondary_cols: tuple[str, ...] = (
-        "sample_name", "condition", "health_state", "tissue_type",
-        "celltype", "model", "cell_types", "tissue_cell_type"
-    )
-    
-    # Columns to never process (IDs, hashes, etc.)
-    exclude_patterns: tuple[str, ...] = (
-        "_id", "accession", "uuid", "hash", "checksum", "md5", "sha",
-        "url", "path", "file", "date", "time"
-    )
-    
-    # Thresholds for auto-discovery of additional columns
-    min_avg_length: float = 10.0
-    min_non_null_pct: float = 0.01
+from config import ClassifierConfig, TextColumnConfig, DEFAULT_CONFIG
 
 
 def normalize_text_column(col_expr: pl.Expr) -> pl.Expr:
@@ -48,8 +23,8 @@ def normalize_text_column(col_expr: pl.Expr) -> pl.Expr:
 
 def identify_viable_text_columns(
     df: pl.DataFrame,
-    config: TextColumnConfig = TextColumnConfig(),
-) -> dict[str, list[str]]:
+    config: ClassifierConfig = DEFAULT_CONFIG,
+) -> Dict[str, List[str]]:
     """
     Identify text columns organized by tier.
     
@@ -60,7 +35,7 @@ def identify_viable_text_columns(
             "discovered": [...],  # Tier 3 - auto-discovered
         }
     """
-    result = {"priority": [], "secondary": [], "discovered": []}
+    result: Dict[str, List[str]] = {"priority": [], "secondary": [], "discovered": []}
     n_rows = len(df)
     
     # Tier 1: Priority columns (if they exist)
@@ -106,9 +81,9 @@ def identify_viable_text_columns(
 
 def preprocess_dataframe(
     df: pl.DataFrame,
-    config: TextColumnConfig = TextColumnConfig(),
+    config: ClassifierConfig = DEFAULT_CONFIG,
     include_discovered: bool = False,
-) -> tuple[pl.DataFrame, dict[str, list[str]]]:
+) -> Tuple[pl.DataFrame, Dict[str, List[str]]]:
     """
     Full preprocessing pipeline - run once at load time.
     
@@ -133,11 +108,11 @@ def preprocess_dataframe(
     # Step 3: Apply normalization (vectorized, single pass)
     if cols_to_normalize:
         df = df.with_columns([
-            normalize_text_column(pl.col(col)).alias(f"{col}_norm")
+            normalize_text_column(pl.col(col)).alias("{}_norm".format(col))
             for col in cols_to_normalize
         ])
     
     # Track which normalized columns were created
-    col_tiers["normalized"] = [f"{c}_norm" for c in cols_to_normalize]
+    col_tiers["normalized"] = ["{}_norm".format(c) for c in cols_to_normalize]
     
     return df, col_tiers

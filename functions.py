@@ -11,6 +11,7 @@ This module provides utilities for:
 from __future__ import annotations
 
 import re
+from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 import polars as pl
@@ -23,6 +24,8 @@ from config import (
     ONCO_TRAPS,
     CANCER_KEYWORDS,
     SPECIFIC_CANCER_TYPES,
+    CANCER_RULE_DEFINITIONS,
+    NON_CANCER_RULE_DEFINITIONS,
     ClassifierConfig,
     DEFAULT_CONFIG,
 )
@@ -30,13 +33,6 @@ from config import (
 if TYPE_CHECKING:
     from spacy.language import Language
     from spacy.tokens import Doc
-
-# =============================================================================
-# Module-level state
-# =============================================================================
-
-# Global NLP pipeline (lazy-loaded)
-_nlp: Optional["Language"] = None
 
 
 # =============================================================================
@@ -346,8 +342,7 @@ def medspacy_classify(
             "label": ent.label_,
             "is_negated": getattr(ent._, "is_negated", False),
             "is_hypothetical": getattr(ent._, "is_hypothetical", False),
-            "is_historical": getattr(ent._, "is_historical", False),
-            "is_family": getattr(ent._, "is_family", False),
+            "is_historical": getattr(ent._, "is_family", False),
         }
         entities.append(ent_info)
         
@@ -520,85 +515,46 @@ def resolve_uncertain(
 
 
 # =============================================================================
-# MedSpaCy Pipeline Setup
+# MedSpaCy Pipeline Setup - Singleton Pattern
 # =============================================================================
 
-def get_default_target_rules() -> Tuple[List[TargetRule], List[TargetRule]]:
+@lru_cache(maxsize=1)
+def get_default_target_rules() -> Tuple[Tuple[TargetRule, ...], Tuple[TargetRule, ...]]:
     """
     Get default TargetRules for cancer and non-cancer entity detection.
     
+    This function is cached to avoid recreating rules on every call.
+    
     Returns:
-        Tuple of (cancer_rules, non_cancer_rules) where each is a list
+        Tuple of (cancer_rules, non_cancer_rules) where each is a tuple
         of TargetRule objects for the MedSpaCy target matcher.
     """
-    cancer_rules: List[TargetRule] = [
-        # General cancer terms
-        TargetRule("cancer", "CANCER", pattern=r"\bcancers?\b"),
-        TargetRule("tumor", "CANCER", pattern=r"\btumou?rs?\b"),
-        TargetRule("malignant", "CANCER", pattern=r"\bmalignan(?:t|cy)\b"),
-        TargetRule("carcinoma", "CANCER", pattern=r"\bcarcinomas?\b"),
-        TargetRule("neoplasm", "CANCER", pattern=r"\bneoplasms?\b"),
-        TargetRule("metastasis", "CANCER", pattern=r"\bmetasta(?:s|t)(?:is|es)?\b"),
-        TargetRule("adenocarcinoma", "CANCER_TYPE", pattern=r"\badenocarcinomas?\b"),
-        TargetRule("sarcoma", "CANCER_TYPE", pattern=r"\bsarcomas?\b"),
-        TargetRule("leukemia", "CANCER_TYPE", pattern=r"\bleuk[ae]mias?\b"),
-        TargetRule("lymphoma", "CANCER_TYPE", pattern=r"\blymphomas?\b"),
-        TargetRule("glioblastoma", "CANCER_TYPE", pattern=r"\bglioblastomas?\b"),
-        TargetRule("melanoma", "CANCER_TYPE", pattern=r"\bmelanomas?\b"),
-        TargetRule("myeloma", "CANCER_TYPE", pattern=r"\bmyelomas?\b"),
-        TargetRule("neuroblastoma", "CANCER_TYPE", pattern=r"\bneuroblastomas?\b"),
-        TargetRule("hepatocellular carcinoma", "CANCER_TYPE"),
-        TargetRule("breast cancer", "CANCER_TYPE"),
-        TargetRule("lung cancer", "CANCER_TYPE"),
-        TargetRule("colon cancer", "CANCER_TYPE"),
-        TargetRule("prostate cancer", "CANCER_TYPE"),
-        TargetRule("pancreatic cancer", "CANCER_TYPE"),
-        TargetRule("ovarian cancer", "CANCER_TYPE"),
-        TargetRule("bladder cancer", "CANCER_TYPE"),
-        TargetRule("skin cancer", "CANCER_TYPE"),
-        TargetRule("brain cancer", "CANCER_TYPE"),
-        TargetRule("liver cancer", "CANCER_TYPE"),
-        TargetRule("kidney cancer", "CANCER_TYPE"),
-        TargetRule("renal cell carcinoma", "CANCER_TYPE"),
-        TargetRule("squamous cell carcinoma", "CANCER_TYPE"),
-        TargetRule("basal cell carcinoma", "CANCER_TYPE"),
-        TargetRule("non-small cell lung cancer", "CANCER_TYPE"),
-        TargetRule("small cell lung cancer", "CANCER_TYPE"),
-        TargetRule("triple negative breast cancer", "CANCER_TYPE"),
-        TargetRule("HER2 positive", "CANCER_TYPE"),
-        TargetRule("ER positive", "CANCER_TYPE"),
-        TargetRule("oncogenic", "CANCER", pattern=r"\boncogen(?:ic|e|es)\b"),
-    ]
+    cancer_rules: List[TargetRule] = []
+    for literal, category, pattern in CANCER_RULE_DEFINITIONS:
+        if pattern:
+            cancer_rules.append(TargetRule(literal, category, pattern=pattern))
+        else:
+            cancer_rules.append(TargetRule(literal, category))
     
-    non_cancer_rules: List[TargetRule] = [
-        TargetRule("normal", "NON_CANCER", pattern=r"\bnormal\b"),
-        TargetRule("healthy", "NON_CANCER", pattern=r"\bhealthy\b"),
-        TargetRule("control", "NON_CANCER", pattern=r"\b(?:ctrl|control)\b"),
-        TargetRule("benign", "NON_CANCER", pattern=r"\bbenign\b"),
-        TargetRule("non-tumor", "NON_CANCER", pattern=r"\bnon[-\s]?tumou?r(?:al)?\b"),
-        TargetRule("non-cancer", "NON_CANCER", pattern=r"\bnon[-\s]?cancer(?:ous)?\b"),
-        TargetRule("adjacent normal", "NON_CANCER"),
-        TargetRule("tumor-adjacent normal", "NON_CANCER"),
-        TargetRule("matched normal", "NON_CANCER"),
-        TargetRule("sham", "NON_CANCER", pattern=r"\bsham\b"),
-        TargetRule("unaffected", "NON_CANCER", pattern=r"\bunaffected\b"),
-        TargetRule("wild type", "NON_CANCER", pattern=r"\bwild[-\s]?type\b"),
-        TargetRule("WT", "NON_CANCER", pattern=r"\bWT\b"),
-        # Onco-traps (false positives)
-        TargetRule("oncorhynchus", "NON_CANCER", pattern=r"\boncorhynchus\b"),
-        TargetRule("oncophora", "NON_CANCER", pattern=r"\boncophora\b"),
-        TargetRule("oncotic", "NON_CANCER", pattern=r"\boncotic\b"),
-        TargetRule("oncomodulin", "NON_CANCER", pattern=r"\boncomodulin\b"),
-    ]
+    non_cancer_rules: List[TargetRule] = []
+    for literal, category, pattern in NON_CANCER_RULE_DEFINITIONS:
+        if pattern:
+            non_cancer_rules.append(TargetRule(literal, category, pattern=pattern))
+        else:
+            non_cancer_rules.append(TargetRule(literal, category))
     
-    return cancer_rules, non_cancer_rules
+    # Return as tuples for hashability (needed for lru_cache)
+    return tuple(cancer_rules), tuple(non_cancer_rules)
 
 
 def initialize_medspacy_pipeline(
-    *rule_lists: List[TargetRule],
+    *rule_lists: Union[List[TargetRule], Tuple[TargetRule, ...]],
 ) -> "Language":
     """
     Initialize and configure a MedSpaCy pipeline for cancer classification.
+    
+    Note: This creates a NEW pipeline each time. For singleton behavior,
+    use get_nlp() instead.
     
     Args:
         *rule_lists: Variable number of TargetRule lists to add to the pipeline.
@@ -616,15 +572,130 @@ def initialize_medspacy_pipeline(
     target_matcher = nlp.get_pipe("medspacy_target_matcher")
     for rule_list in rule_lists:
         if rule_list:
-            target_matcher.add(rule_list)
+            target_matcher.add(list(rule_list))
     
     return nlp
+
+
+class NLPPipelineManager:
+    """
+    Singleton manager for the MedSpaCy NLP pipeline.
+    
+    This class provides thread-safe lazy initialization of the NLP pipeline
+    and allows for customization with additional rules.
+    
+    Usage:
+        # Get the default pipeline
+        nlp = NLPPipelineManager.get_pipeline()
+        
+        # Get a pipeline with custom rules
+        nlp = NLPPipelineManager.get_pipeline(additional_rules=[...])
+        
+        # Reset the pipeline (e.g., to add new rules)
+        NLPPipelineManager.reset()
+    """
+    
+    _instance: Optional["Language"] = None
+    _additional_rules: List[TargetRule] = []
+    
+    @classmethod
+    def get_pipeline(
+        cls,
+        additional_rules: Optional[List[TargetRule]] = None,
+    ) -> "Language":
+        """
+        Get or create the singleton NLP pipeline.
+        
+        Args:
+            additional_rules: Extra TargetRules to add to the pipeline.
+                             Only applied on first initialization or after reset().
+        
+        Returns:
+            Initialized MedSpaCy Language pipeline.
+        """
+        if cls._instance is None:
+            cancer_rules, non_cancer_rules = get_default_target_rules()
+            cls._instance = initialize_medspacy_pipeline(cancer_rules, non_cancer_rules)
+            
+            # Add any additional rules
+            if additional_rules:
+                cls._additional_rules = additional_rules
+                target_matcher = cls._instance.get_pipe("medspacy_target_matcher")
+                target_matcher.add(additional_rules)
+        
+        return cls._instance
+    
+    @classmethod
+    def add_rules(cls, rules: List[TargetRule]) -> None:
+        """
+        Add rules to the existing pipeline.
+        
+        Args:
+            rules: TargetRules to add.
+        """
+        pipeline = cls.get_pipeline()
+        target_matcher = pipeline.get_pipe("medspacy_target_matcher")
+        target_matcher.add(rules)
+        cls._additional_rules.extend(rules)
+    
+    @classmethod
+    def reset(cls) -> None:
+        """
+        Reset the singleton pipeline.
+        
+        Call this to force re-initialization on next get_pipeline() call.
+        """
+        cls._instance = None
+        cls._additional_rules = []
+    
+    @classmethod
+    def get_rule_count(cls) -> int:
+        """Get the number of rules in the current pipeline."""
+        if cls._instance is None:
+            return 0
+        target_matcher = cls._instance.get_pipe("medspacy_target_matcher")
+        return len(target_matcher.rules)
+
+
+def get_nlp(additional_rules: Optional[List[TargetRule]] = None) -> "Language":
+    """
+    Get the singleton MedSpaCy pipeline.
+    
+    This is the recommended way to get the NLP pipeline for classification.
+    The pipeline is lazily initialized on first call and reused thereafter.
+    
+    Args:
+        additional_rules: Extra TargetRules to add on first initialization.
+        
+    Returns:
+        Initialized MedSpaCy Language pipeline.
+        
+    Example:
+        # Simple usage
+        nlp = get_nlp()
+        doc = nlp("breast cancer tissue sample")
+        
+        # With additional rules
+        from medspacy.ner import TargetRule
+        custom_rules = [TargetRule("my_cancer_type", "CANCER_TYPE")]
+        nlp = get_nlp(additional_rules=custom_rules)
+    """
+    return NLPPipelineManager.get_pipeline(additional_rules=additional_rules)
+
+
+def reset_nlp() -> None:
+    """
+    Reset the singleton NLP pipeline.
+    
+    Use this if you need to reinitialize the pipeline with different rules.
+    """
+    NLPPipelineManager.reset()
 
 
 def generate_disease_rules(
     unique_diseases: List[Optional[str]],
     nlp: "Language",
-    existing_rules: List[TargetRule],
+    existing_rules: Union[List[TargetRule], Tuple[TargetRule, ...]],
 ) -> Tuple[List[TargetRule], List[str]]:
     """
     Auto-generate TargetRules from unique disease values in metadata.
@@ -681,22 +752,6 @@ def generate_disease_rules(
             skipped.append("{} (not cancer-related)".format(disease))
     
     return new_rules, skipped
-
-
-def get_nlp() -> "Language":
-    """
-    Get or initialize the global MedSpaCy pipeline.
-    
-    Returns:
-        Initialized MedSpaCy Language pipeline.
-    """
-    global _nlp
-    
-    if _nlp is None:
-        cancer_rules, non_cancer_rules = get_default_target_rules()
-        _nlp = initialize_medspacy_pipeline(cancer_rules, non_cancer_rules)
-    
-    return _nlp
 
 
 # =============================================================================

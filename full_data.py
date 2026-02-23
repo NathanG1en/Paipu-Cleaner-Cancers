@@ -82,23 +82,25 @@ if __name__ == "__main__":
     # =========================================================================
     # Step 3: Initialize MedSpaCy Pipeline
     # =========================================================================
-    cancer_rules, non_cancer_rules = get_default_target_rules()
-    existing_rules = cancer_rules + non_cancer_rules
+    from functions import get_nlp, reset_nlp, NLPPipelineManager, generate_disease_rules, get_default_target_rules
 
+    # Step 3: Get singleton pipeline (auto-initialized with default rules)
     print("\nInitializing medspacy pipeline...")
-    nlp = initialize_medspacy_pipeline(cancer_rules, non_cancer_rules)
-    print(f"Pipeline initialized. Total rules: {len(nlp.get_pipe('medspacy_target_matcher').rules)}")
+    nlp = get_nlp()
+    print("Pipeline initialized. Total rules: {}".format(NLPPipelineManager.get_rule_count()))
 
     # =========================================================================
     # Step 4: Generate disease-specific rules
     # =========================================================================
+    cancer_rules, non_cancer_rules = get_default_target_rules()
     unique_diseases = all_samples.select("disease").unique().to_series().to_list()
-    auto_rules, skipped = generate_disease_rules(unique_diseases, nlp, existing_rules)
+    auto_rules, skipped = generate_disease_rules(unique_diseases, nlp, cancer_rules + non_cancer_rules)
 
     if auto_rules:
-        tm = nlp.get_pipe("medspacy_target_matcher")
-        tm.add(auto_rules)
-        print(f"Added {len(auto_rules)} auto-generated disease rules")
+        NLPPipelineManager.add_rules(auto_rules)
+        print("Added {} auto-generated disease rules".format(len(auto_rules)))
+
+
 
     # =========================================================================
     # Step 5: MedSpaCy Classification (replaces regex step)
