@@ -149,7 +149,7 @@ if __name__ == "__main__":
         "sample_name", "condition", "tumor", "cell_type.2", "cell_type.3",
         "celltype", "tissue_type", "health_state", "tissue_cell_type_source",
         "source", "model", "tissue_cell_type", "cell_types", "cancer_type",
-        "final_label", "regex_label", "med_label", "regex_reason", "med_reason",
+        "final_label", "regex_label", "med_label", "regex_reason", "med_reason"
     ]
 
     cols_to_keep = [c for c in cols_to_keep if c in predicted_df.columns]

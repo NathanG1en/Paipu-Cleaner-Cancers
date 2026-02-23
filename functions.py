@@ -9,11 +9,12 @@ from medspacy.ner import TargetRule
 from medspacy.target_matcher import TargetMatcher
 from typing import Tuple
 from functools import lru_cache
+from medspacy.context import ConTextRule
 
 # Update PRIORITY_COLS to match the config
 PRIORITY_COLS = [
     "source_name", "tissue", "phenotype", "disease", 
-    "cell_type", "tumor_type", "cancer_type"
+    "cell_type", "tumor_type", "cancer_type", "sample_name"
 ]
 
 
@@ -57,24 +58,8 @@ def classify_cancer_samples(
     use_normalized: bool = False,
 ) -> pl.DataFrame:
     """
-    Classify samples as cancer / non-cancer / uncertain using MedSpaCy NLP.
-    No regex - uses entity recognition and context detection.
-    
-    Args:
-        df: Input DataFrame with text columns
-        nlp_pipeline: MedSpaCy pipeline (uses global if None)
-        batch_size: Batch size for processing
-        use_normalized: If True, looks for pre-normalized columns (col_norm)
-        
-    Returns:
-        DataFrame with added classification columns:
-        - med_label: CANCER, NOT_CANCER, UNCERTAIN, NO_SIGNAL
-        - med_reason: Explanation of classification
-        - confidence_category: Mapped category for compatibility
+    Classify samples with disease column priority for non-cancer signals.
     """
-    if nlp_pipeline is None:
-        nlp_pipeline = get_nlp()
-    
     # Determine which columns to analyze
     priority_cols = [c for c in PRIORITY_COLS if c in df.columns]
     
@@ -83,50 +68,64 @@ def classify_cancer_samples(
     if sample_name_col in df.columns and sample_name_col not in priority_cols:
         priority_cols = [sample_name_col] + priority_cols
     
-    # Collect text data for each row
-    all_row_texts = []
+    # Process each row - track column sources
+    all_texts = []
+    all_col_sources = []
+    row_boundaries = []  # Track where each row's texts start/end
     
     for row in df.iter_rows(named=True):
-        row_texts = []
-        for col in priority_cols:
-            # Check for normalized version first if requested
-            if use_normalized:
-                norm_col = f"{col}_norm"
-                text = row.get(norm_col) or row.get(col)
-            else:
-                text = row.get(col)
-            
-            if text and isinstance(text, str) and text.strip() and text.lower() != "nan":
-                # Light normalization if not using pre-normalized
-                if not use_normalized:
-                    text = text.lower().replace("_", " ").replace("/", " ").replace("|", " ")
-                    text = " ".join(text.split())  # collapse whitespace
-                row_texts.append((text, col))
-        
-        all_row_texts.append(row_texts)
+        row_start = len(all_texts)
+        for col in PRIORITY_COLS:
+            col_name = f"{col}_norm" if use_normalized and f"{col}_norm" in df.columns else col
+            text = row.get(col_name, "") or ""
+            if text.strip():
+                all_texts.append(text)
+                all_col_sources.append(col)  # Track which column this came from
+        row_boundaries.append((row_start, len(all_texts)))
     
-    # Batch classify with MedSpaCy
-    med_labels, med_reasons = medspacy_classify_batch(
-        all_row_texts, 
-        nlp_pipeline, 
-        batch_size=batch_size
+    # Run batch classification
+    med_labels, med_reasons, _, _ = medspacy_classify_batch(
+        all_texts, nlp_pipeline, batch_size, col_sources=all_col_sources
     )
     
-    # Map med_labels to confidence categories for backward compatibility
-    label_to_confidence = {
-        "CANCER": "confident_cancer",
-        "NOT_CANCER": "likely_non_cancer", 
-        "UNCERTAIN": "uncertain_weak_signal",
-        "NO_SIGNAL": "uncertain_no_signal",
-    }
+    # Aggregate per-row with disease column priority
+    final_labels = []
+    final_reasons = []
     
-    confidence_categories = [label_to_confidence.get(lbl, "uncertain_no_signal") for lbl in med_labels]
+    for start, end in row_boundaries:
+        row_labels = med_labels[start:end]
+        row_reasons = med_reasons[start:end]
+        row_sources = all_col_sources[start:end]
+        
+        # Check if disease column specifically has NON_CANCER signal
+        disease_override = False
+        disease_reason = None
+        for i, (label, reason, source) in enumerate(zip(row_labels, row_reasons, row_sources)):
+            if source == "disease" and label == "NON_CANCER":
+                disease_override = True
+                disease_reason = f"disease column: {reason}"
+                break
+        
+        # If disease says non-cancer, override regardless of other columns
+        if disease_override:
+            final_labels.append("NON_CANCER")
+            final_reasons.append(disease_reason)
+        elif "CANCER" in row_labels and "NON_CANCER" not in row_labels:
+            cancer_idx = row_labels.index("CANCER")
+            final_labels.append("CANCER")
+            final_reasons.append(f"{row_sources[cancer_idx]}: {row_reasons[cancer_idx]}")
+        elif "NON_CANCER" in row_labels:
+            non_cancer_idx = row_labels.index("NON_CANCER")
+            final_labels.append("NON_CANCER")
+            final_reasons.append(f"{row_sources[non_cancer_idx]}: {row_reasons[non_cancer_idx]}")
+        else:
+            final_labels.append("NO_SIGNAL")
+            final_reasons.append("no signal in any column")
     
-    # Add results to dataframe
+    # Add columns to dataframe
     df = df.with_columns([
-        pl.Series("med_label", med_labels),
-        pl.Series("med_reason", med_reasons),
-        pl.Series("confidence_category", confidence_categories),
+        pl.Series("med_label", final_labels),
+        pl.Series("med_reason", final_reasons),
     ])
     
     return df
@@ -198,124 +197,71 @@ def medspacy_classify(row_texts, nlp_pipeline=None):
 
 
 def medspacy_classify_batch(
-    all_row_texts: list[list[tuple[str, str]]], 
-    nlp_pipeline=None, 
-    batch_size: int = 32
+    texts: list[str],
+    nlp,
+    batch_size: int = 64,
+    col_sources: list[str] = None,  # NEW: Track which column each text came from
 ) -> tuple[list[str], list[str]]:
     """
-    Batch process multiple rows of (text, column_name) pairs with MedSpacy.
-    
-    OPTIMIZED VERSION:
-    - Uses nlp.pipe() for bulk processing
-    - Deduplicates texts to avoid redundant NLP calls
-    - Skips non-alphabetic text early
+    Batch classify texts using MedSpaCy pipeline.
     
     Args:
-        all_row_texts: List of [(text, col_name), ...] per row
-        nlp_pipeline: MedSpacy pipeline (uses global if None)
-        batch_size: Number of texts to process at once in nlp.pipe()
-        
-    Returns:
-        Tuple of (labels, reasons) - two parallel lists
-    """
-    if nlp_pipeline is None:
-        nlp_pipeline = get_nlp()
+        texts: List of text strings to classify
+        nlp: Initialized MedSpaCy pipeline
+        batch_size: Batch size for processing
+        col_sources: Optional list indicating which column each text came from
+                    (e.g., ["disease", "tissue", "source_name", ...])
     
+    Returns:
+        Tuple of (labels, reasons) lists
+    """
     labels = []
     reasons = []
     
-    # Process in chunks of rows
-    for i in range(0, len(all_row_texts), batch_size):
-        batch = all_row_texts[i:i + batch_size]
-        
-        # OPTIMIZATION 1: Collect all unique texts from this batch
-        unique_texts = set()
-        for row_texts in batch:
-            for text, _ in row_texts:
-                if text and text.strip() and _has_alphabetic(text):
-                    unique_texts.add(text)
-        
-        # OPTIMIZATION 2: Process all unique texts in bulk with nlp.pipe()
-        unique_texts_list = list(unique_texts)
-        if unique_texts_list:
-            docs = list(nlp_pipeline.pipe(unique_texts_list, batch_size=min(64, len(unique_texts_list))))
-            doc_map = dict(zip(unique_texts_list, docs))
-        else:
-            doc_map = {}
-        
-        # Now process each row using the cached doc results
-        for row_texts in batch:
-            if not row_texts:
-                labels.append("NO_SIGNAL")
-                reasons.append("No text to analyze")
-                continue
-            
-            # OPTIMIZATION 3: Skip entire row if no alphabetic text
-            valid_texts = [(text, col) for text, col in row_texts 
-                          if text and text.strip() and _has_alphabetic(text)]
-            
-            if not valid_texts:
-                labels.append("NO_SIGNAL")
-                reasons.append("No alphabetic text in row")
-                continue
-            
-            cancer_found = False
-            non_cancer_found = False
-            negation_found = False
-            detected_terms = []
-            
-            # OPTIMIZATION 4: Deduplicate within row
-            seen_texts = set()
-            
-            for text, col_name in valid_texts:
-                # Skip duplicates within this row
-                if text in seen_texts:
-                    continue
-                seen_texts.add(text)
-                
-                # Use pre-computed doc from cache
-                doc = doc_map.get(text)
-                if doc is None:
-                    continue
-                    
-                for ent in doc.ents:
-                    # Skip entities that are purely numeric
-                    if not _has_alphabetic(ent.text):
-                        continue
-                        
-                    if ent.label_ == "CANCER":
-                        if ent._.is_negated:
-                            negation_found = True
-                            detected_terms.append(f"negated:{ent.text} ({col_name})")
-                        else:
-                            cancer_found = True
-                            detected_terms.append(f"{ent.text} ({col_name})")
-                    elif ent.label_ == "NON_CANCER":
-                        if not ent._.is_negated:
-                            non_cancer_found = True
-                            detected_terms.append(f"non-cancer:{ent.text} ({col_name})")
-            
-            # Decision logic
-            if not detected_terms:
-                labels.append("NO_SIGNAL")
-                reasons.append("No valid alphabetic cancer-related text")
-            elif cancer_found and not negation_found:
-                labels.append("CANCER")
-                reasons.append(f"Detected: {', '.join(detected_terms)}")
-            elif non_cancer_found and not cancer_found:
-                labels.append("NOT_CANCER")
-                reasons.append(f"Non-cancer terms: {', '.join(detected_terms)}")
-            elif cancer_found and non_cancer_found:
-                labels.append("UNCERTAIN")
-                reasons.append(f"Mixed signals: {', '.join(detected_terms)}")
-            elif negation_found:
-                labels.append("NOT_CANCER")
-                reasons.append(f"Negated cancer terms: {', '.join(detected_terms)}")
-            else:
-                labels.append("NO_SIGNAL")
-                reasons.append("No cancer-related terms detected")
+    # Track disease column non-cancer signals separately
+    disease_has_non_cancer = False
+    disease_non_cancer_term = None
     
-    return labels, reasons
+    for i, doc in enumerate(nlp.pipe(texts, batch_size=batch_size)):
+        cancer_terms = []
+        non_cancer_terms = []
+        negated_cancer_terms = []
+        
+        for ent in doc.ents:
+            if ent.label_ == "CANCER":
+                if ent._.is_negated:
+                    negated_cancer_terms.append(ent.text)
+                else:
+                    cancer_terms.append(ent.text)
+            elif ent.label_ == "NON_CANCER":
+                if not ent._.is_negated:
+                    non_cancer_terms.append(ent.text)
+        
+        # Check if this text is from the disease column
+        is_disease_col = col_sources and i < len(col_sources) and col_sources[i] == "disease"
+        
+        # If disease column has NON_CANCER signal, flag it
+        if is_disease_col and (non_cancer_terms or negated_cancer_terms):
+            disease_has_non_cancer = True
+            disease_non_cancer_term = non_cancer_terms[0] if non_cancer_terms else f"not {negated_cancer_terms[0]}"
+        
+        # Determine label for this text
+        if cancer_terms and not negated_cancer_terms and not non_cancer_terms:
+            labels.append("CANCER")
+            reasons.append(f"affirmed: {', '.join(cancer_terms)}")
+        elif non_cancer_terms or negated_cancer_terms:
+            labels.append("NON_CANCER")
+            reason_parts = []
+            if non_cancer_terms:
+                reason_parts.append(f"non-cancer: {', '.join(non_cancer_terms)}")
+            if negated_cancer_terms:
+                reason_parts.append(f"negated: {', '.join(negated_cancer_terms)}")
+            reasons.append("; ".join(reason_parts))
+        else:
+            labels.append("NO_SIGNAL")
+            reasons.append("no entities detected")
+    
+    return labels, reasons, disease_has_non_cancer, disease_non_cancer_term
 
 
 def resolve_uncertain(
@@ -577,7 +523,25 @@ def get_default_target_rules():
             literal="premalignant",
             category="NON_CANCER",
             pattern=[{"LOWER": {"REGEX": "pre[- ]?malignan(t|cy)"}, "IS_ALPHA": True}]
-        )
+        ),
+        # TODO: look at this and see if there is a better resolution for negating the non- prefix
+        # Explicit non-cancer patterns (these override cancer term matching, )
+        # TargetRule("non-tumor", "NON_CANCER"),
+        # TargetRule("non tumor", "NON_CANCER"),
+        TargetRule("non-tumor tissue", "NON_CANCER"),
+        TargetRule("adenoma", "CANCER"),
+        TargetRule("meningioma", "CANCER"),
+        # TargetRule("non-tumour", "NON_CANCER"),
+        # TargetRule("non tumour", "NON_CANCER"),
+        # TargetRule("non-cancer", "NON_CANCER"),
+        # TargetRule("non cancer", "NON_CANCER"),
+        # TargetRule("non-cancerous", "NON_CANCER"),
+        # TargetRule("non-malignant", "NON_CANCER"),
+        # TargetRule("non malignant", "NON_CANCER"),
+        # TargetRule("non-neoplastic", "NON_CANCER"),
+        # TargetRule("non-metastatic", "NON_CANCER"),
+        # TargetRule("non-lymphoma", "NON_CANCER"),
+        # TargetRule("non lymphoma", "NON_CANCER"),
     ]
 
     return cancer_rules, non_cancer_rules
@@ -612,6 +576,14 @@ def initialize_medspacy_pipeline(*rule_lists):
     # Add all rule lists to the target matcher
     for rules in rule_lists:
         tm.add(rules)
+
+    # Add custom negation rules for "non-" prefix patterns
+    context = nlp.get_pipe("medspacy_context")
+    custom_context_rules = [
+        ConTextRule("non", "NEGATED_EXISTENCE", direction="forward", max_scope=1),
+        ConTextRule("non-", "NEGATED_EXISTENCE", direction="forward", max_scope=1),
+    ]
+    context.add(custom_context_rules)
 
     return nlp
 
