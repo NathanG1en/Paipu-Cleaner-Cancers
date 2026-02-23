@@ -49,6 +49,27 @@ with st.spinner("Loading MedSpacy pipeline with disease rules..."):
 total_rules = len(nlp.get_pipe('medspacy_target_matcher').rules)
 st.success(f"Pipeline loaded: {total_rules} total rules ({auto_rule_count} from diseases, {skipped_count} skipped duplicates)")
 
+# Add this after loading the pipeline to debug
+with st.expander("🔍 Debug: Find rule matching '5'"):
+    test_doc = nlp("5")
+    st.write(f"Entities found: {len(test_doc.ents)}")
+    for ent in test_doc.ents:
+        st.write(f"Entity: '{ent.text}' | Label: {ent.label_}")
+    
+    # Find rules that might match numbers
+    tm = nlp.get_pipe("medspacy_target_matcher")
+    suspicious_rules = []
+    for rule in tm.rules:
+        literal_lower = rule.literal.lower().strip()
+        # Check if literal is numeric or very short
+        if literal_lower.isdigit() or len(literal_lower) <= 2:
+            suspicious_rules.append(f"{rule.literal} -> {rule.category}")
+    
+    if suspicious_rules:
+        st.warning(f"Found {len(suspicious_rules)} suspicious rules:")
+        for r in suspicious_rules[:20]:
+            st.code(r)
+
 # Input
 text_input = st.text_area(
     "Enter text to classify:",

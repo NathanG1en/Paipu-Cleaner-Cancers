@@ -45,6 +45,7 @@ if __name__ == "__main__":
         schema_overrides={"group": pl.Utf8},
         infer_schema_length=0,
     )
+
     print(f"Total samples loaded: {len(all_samples)}")
     print(f"Total columns: {len(all_samples.columns)}")
 
@@ -98,104 +99,33 @@ if __name__ == "__main__":
         print(f"Added {len(auto_rules)} auto-generated disease rules")
 
     # =========================================================================
-    # Step 5: Regex-based classification
+    # Step 5: MedSpaCy Classification (replaces regex step)
     # =========================================================================
-    # Pass normalized column info so classifier can use pre-normalized text
+    print("\n=== MedSpaCy Classification ===")
     predicted_df = classify_cancer_samples(
         all_samples,
-        use_normalized=True,  # Use _norm columns if available
+        nlp_pipeline=nlp,
+        batch_size=64,
+        use_normalized=True,
     )
 
-    print("\n=== Regex Classification Summary ===")
-    regex_summary = (
+    predicted_df = predicted_df.with_columns(
+        pl.col("confidence_category")
+        .replace(FINAL_LABEL_MAP)
+        .alias("final_label")
+    )
+
+    print("\n=== Classification Summary ===")
+    summary = (
         predicted_df
-        .group_by("confidence_category")
-        .agg(pl.count().alias("count"))
+        .group_by("med_label")
+        .agg(pl.len().alias("count"))
         .sort("count", descending=True)
     )
-    print(regex_summary)
+    print(summary)
 
-    # =========================================================================
-    # Step 6: Filter uncertain samples for MedSpaCy
-    # =========================================================================
-    uncertain_df = predicted_df.filter(
-        pl.col("confidence_category").is_in([
-            "uncertain_no_signal",
-            "uncertain_weak_signal",
-            "likely_non_cancer"
-        ])
-    )
-
-    print(f"\n=== Medspacy Processing ===")
-    print(f"Samples requiring medspacy analysis: {len(uncertain_df)}")
-
-    # =========================================================================
-    # Step 7: Process with MedSpaCy (batched)
-    # =========================================================================
-    all_texts = []
-    for row in uncertain_df.iter_rows(named=True):
-        texts = clean_texts(row, use_normalized=True)
-        all_texts.append(texts if texts else [])
-
-    print(f"Processing {len(all_texts)} samples in batches...")
-
-    med_labels, med_reasons = medspacy_classify_batch(all_texts, nlp, batch_size=64)
-
-    uncertain_df = uncertain_df.with_columns([
-        pl.Series("med_label", med_labels),
-        pl.Series("med_reason", med_reasons),
-    ])
-
-    # Stats
-    print(f"\n=== Medspacy Results ===")
-    print(f"CANCER detected: {med_labels.count('CANCER')}")
-    print(f"NOT_CANCER detected: {med_labels.count('NOT_CANCER')}")
-    print(f"NO_SIGNAL: {med_labels.count('NO_SIGNAL')}")
-    print(f"UNCERTAIN: {med_labels.count('UNCERTAIN')}")
-
-    # =========================================================================
-    # Step 8: Join MedSpaCy results back
-    # =========================================================================
-    uncertain_df = uncertain_df.unique(subset=["run_accession"], keep="first")
-
-    predicted_df = predicted_df.join(
-        uncertain_df.select(["run_accession", "med_label", "med_reason"]),
-        on="run_accession",
-        how="left",
-    )
-
-    predicted_df = predicted_df.with_columns([
-        pl.col("med_label").fill_null(""),
-        pl.col("med_reason").fill_null(""),
-    ])
-
-    # =========================================================================
-    # Step 9: Resolve final classification
-    # =========================================================================
-    final_labels = []
-    regex_labels = []
-    med_labels_out = []
-    regex_reasons = []
-    med_reasons_out = []
-
-    for row in predicted_df.iter_rows(named=True):
-        result = resolve_uncertain(
-            regex_label=row["confidence_category"],
-            med_label=row["med_label"],
-            regex_reason=row.get("decision_reason", ""),
-            med_reason=row["med_reason"],
-        )
-        final_labels.append(result[0])
-        regex_labels.append(result[1])
-        med_labels_out.append(result[2])
-        regex_reasons.append(result[3])
-        med_reasons_out.append(result[4])
-
-    predicted_df = predicted_df.with_columns([
-        pl.Series("final_label", final_labels),
-        pl.Series("regex_label", regex_labels),
-        pl.Series("regex_reason", regex_reasons),
-    ])
+    # No need for the "uncertain filtering + re-processing" stage anymore
+    # MedSpaCy handles everything in one pass
 
     # =========================================================================
     # Step 10: Display results
@@ -204,7 +134,7 @@ if __name__ == "__main__":
     final_summary = (
         predicted_df
         .group_by("final_label")
-        .agg(pl.count().alias("count"))
+        .agg(pl.len().alias("count"))
         .sort("count", descending=True)
     )
     print(final_summary)
@@ -219,7 +149,7 @@ if __name__ == "__main__":
         "sample_name", "condition", "tumor", "cell_type.2", "cell_type.3",
         "celltype", "tissue_type", "health_state", "tissue_cell_type_source",
         "source", "model", "tissue_cell_type", "cell_types", "cancer_type",
-        "final_label", "regex_label", "med_label", "regex_reason", "med_reason",
+        "final_label", "regex_label", "med_label", "regex_reason", "med_reason"
     ]
 
     cols_to_keep = [c for c in cols_to_keep if c in predicted_df.columns]

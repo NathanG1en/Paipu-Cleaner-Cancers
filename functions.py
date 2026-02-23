@@ -8,11 +8,13 @@ import medspacy
 from medspacy.ner import TargetRule
 from medspacy.target_matcher import TargetMatcher
 from typing import Tuple
+from functools import lru_cache
+from medspacy.context import ConTextRule
 
 # Update PRIORITY_COLS to match the config
 PRIORITY_COLS = [
     "source_name", "tissue", "phenotype", "disease", 
-    "cell_type", "tumor_type", "cancer_type"
+    "cell_type", "tumor_type", "cancer_type", "sample_name"
 ]
 
 
@@ -51,102 +53,83 @@ def clean_texts(
 
 def classify_cancer_samples(
     df: pl.DataFrame,
+    nlp_pipeline=None,
+    batch_size: int = 64,
     use_normalized: bool = False,
 ) -> pl.DataFrame:
     """
-    Classify samples as cancer / non-cancer / uncertain based on metadata text patterns.
-    Returns the same DataFrame with added classification columns.
-    
-    Args:
-        df: Input DataFrame
-        use_normalized: If True, use pre-normalized _norm columns (faster)
+    Classify samples with disease column priority for non-cancer signals.
     """
-    # --- Step 1: Setup ---
+    # Determine which columns to analyze
     priority_cols = [c for c in PRIORITY_COLS if c in df.columns]
     
-    # Regex patterns
-    CANCER_POS = r"(?:\bcancers?\b|\btumou?rs?\b|\bmalignan(?:t|cy)\b|\bcarcinomas?\b|\bneoplasms?\b|\bmetasta(?:s|t)es?\b|\badenocarcinomas?\b|\bsarcomas?\b|\bleukemi(?:a|as)\b|\blymphom(?:a|as)\b|\bglioblastomas?\b|\bmelanomas?\b|\boncolog(?:y|ic|ical)\b)"
-    CANCER_NEG = r"(?:\bnormal\b|\bhealthy\b|\bctrl\b|\badjacent normal\b|\bnon[-\s]?tumou?r(?:al)?\b|\bbenign\b|\bnon[-\s]?cancer(?:ous)?\b|\bsham\b|\bunaffected\b)"
-    ONCO_TRAPS = r"(?:\boncophora\b|\boncorhynchus\b|\boncotic\b|\boncomodulin\b)"
-
-    def normalize_text(col_expr):
-        """Normalize text - only needed if not using pre-normalized columns."""
-        return (
-            col_expr.cast(pl.Utf8)
-            .fill_null("")
-            .str.to_lowercase()
-            .str.replace_all(r"[_/|]", " ")
-            .str.replace_all(r"\s+", " ")
-            .str.strip_chars()
-        )
-
-    def get_text_col(col_name: str) -> pl.Expr:
-        """Get the appropriate column expression (normalized or raw)."""
-        norm_col = f"{col_name}_norm"
-        if use_normalized and norm_col in df.columns:
-            # Already normalized, just use it directly
-            return pl.col(norm_col)
-        else:
-            # Normalize on the fly
-            return normalize_text(pl.col(col_name))
-
-    # --- Step 2: Sample name detection ---
+    # Add sample name column
     sample_name_col = "title" if "title" in df.columns else "biosample"
+    if sample_name_col in df.columns and sample_name_col not in priority_cols:
+        priority_cols = [sample_name_col] + priority_cols
     
+    # Process each row - track column sources
+    all_texts = []
+    all_col_sources = []
+    row_boundaries = []  # Track where each row's texts start/end
+    
+    for row in df.iter_rows(named=True):
+        row_start = len(all_texts)
+        for col in PRIORITY_COLS:
+            col_name = f"{col}_norm" if use_normalized and f"{col}_norm" in df.columns else col
+            text = row.get(col_name, "") or ""
+            if text.strip():
+                all_texts.append(text)
+                all_col_sources.append(col)  # Track which column this came from
+        row_boundaries.append((row_start, len(all_texts)))
+    
+    # Run batch classification
+    med_labels, med_reasons, _, _ = medspacy_classify_batch(
+        all_texts, nlp_pipeline, batch_size, col_sources=all_col_sources
+    )
+    
+    # Aggregate per-row with disease column priority
+    final_labels = []
+    final_reasons = []
+    
+    for start, end in row_boundaries:
+        row_labels = med_labels[start:end]
+        row_reasons = med_reasons[start:end]
+        row_sources = all_col_sources[start:end]
+        
+        # Check if disease column specifically has NON_CANCER signal
+        disease_override = False
+        disease_reason = None
+        for i, (label, reason, source) in enumerate(zip(row_labels, row_reasons, row_sources)):
+            if source == "disease" and label == "NON_CANCER":
+                disease_override = True
+                disease_reason = f"disease column: {reason}"
+                break
+        
+        # If disease says non-cancer, override regardless of other columns
+        if disease_override:
+            final_labels.append("NON_CANCER")
+            final_reasons.append(disease_reason)
+        elif "CANCER" in row_labels and "NON_CANCER" not in row_labels:
+            cancer_idx = row_labels.index("CANCER")
+            final_labels.append("CANCER")
+            final_reasons.append(f"{row_sources[cancer_idx]}: {row_reasons[cancer_idx]}")
+        elif "NON_CANCER" in row_labels:
+            non_cancer_idx = row_labels.index("NON_CANCER")
+            final_labels.append("NON_CANCER")
+            final_reasons.append(f"{row_sources[non_cancer_idx]}: {row_reasons[non_cancer_idx]}")
+        else:
+            final_labels.append("NO_SIGNAL")
+            final_reasons.append("no signal in any column")
+    
+    # Add columns to dataframe
     df = df.with_columns([
-        get_text_col(sample_name_col).str.contains(CANCER_POS).alias("cancer_in_sample_name"),
-        get_text_col(sample_name_col).str.contains(CANCER_NEG).alias("negative_in_sample_name"),
-        get_text_col(sample_name_col).str.contains(ONCO_TRAPS).alias("onco_trap_in_sample_name"),
+        pl.Series("med_label", final_labels),
+        pl.Series("med_reason", final_reasons),
     ])
-
-    # --- Step 3: Check priority columns ---
-    for col in priority_cols:
-        df = df.with_columns([
-            get_text_col(col).str.contains(CANCER_POS).alias(f"cancer_in_{col}"),
-            get_text_col(col).str.contains(CANCER_NEG).alias(f"negative_in_{col}"),
-        ])
-
-    # --- Step 4: Count mentions ---
-    cancer_mention_cols = [f"cancer_in_{c}" for c in priority_cols]
-    negative_mention_cols = [f"negative_in_{c}" for c in priority_cols]
-
-    df = df.with_columns([
-        pl.sum_horizontal([pl.col(c) for c in cancer_mention_cols if c in df.columns]).alias("n_cancer_mentions"),
-        pl.sum_horizontal([pl.col(c) for c in negative_mention_cols if c in df.columns]).alias("n_negative_mentions"),
-    ])
-
-    # --- Step 5: Confidence category ---
-    df = df.with_columns([
-        pl.when(pl.col("onco_trap_in_sample_name"))
-        .then(pl.lit("uncertain_onco_trap"))
-        .when(
-            pl.col("cancer_in_sample_name") &
-            (pl.col("n_cancer_mentions") >= 1) &
-            (pl.col("n_negative_mentions") == 0)
-        )
-        .then(pl.lit("confident_cancer"))
-        .when(
-            (pl.col("cancer_in_sample_name") & (pl.col("n_negative_mentions") == 0)) |
-            (pl.col("n_cancer_mentions") >= 2)
-        )
-        .then(pl.lit("likely_cancer"))
-        .when(
-            pl.col("negative_in_sample_name") |
-            (pl.col("n_negative_mentions") >= 1)
-        )
-        .then(pl.lit("likely_non_cancer"))
-        .when(pl.col("n_cancer_mentions") == 1)
-        .then(pl.lit("uncertain_weak_signal"))
-        .otherwise(pl.lit("uncertain_no_signal"))
-        .alias("confidence_category")
-    ])
-
+    
     return df
-import polars as pl
-import medspacy
-from medspacy.ner import TargetRule
-from medspacy.target_matcher import TargetMatcher
-from typing import Tuple
+
 
 # so I don't repeat it
 PRIORITY_COLS = [
@@ -156,6 +139,10 @@ PRIORITY_COLS = [
     "source", "model", "tissue_cell_type", "cell_types"
 ]
 
+
+def _has_alphabetic(text: str) -> bool:
+    """Check if text contains at least one alphabetic character."""
+    return any(c.isalpha() for c in text)
 
 
 def medspacy_classify(row_texts, nlp_pipeline=None):
@@ -173,8 +160,14 @@ def medspacy_classify(row_texts, nlp_pipeline=None):
     cancer_found = False
     non_cancer_found = False
     negation_found = False
+    has_valid_text = False
 
     for text in row_texts:
+        # Skip non-semantic input (numbers, IDs, hashes)
+        if not text or not _has_alphabetic(text):
+            continue
+        
+        has_valid_text = True
         doc = pipeline(text)
         for ent in doc.ents:
             if ent.label_ == "CANCER":
@@ -185,6 +178,10 @@ def medspacy_classify(row_texts, nlp_pipeline=None):
             elif ent.label_ == "NON_CANCER":
                 if not ent._.is_negated:
                     non_cancer_found = True
+
+    # Return NO_SIGNAL if no valid alphabetic text was processed
+    if not has_valid_text:
+        return "NO_SIGNAL"
 
     # Decision hierarchy
     if cancer_found and not negation_found:
@@ -200,77 +197,71 @@ def medspacy_classify(row_texts, nlp_pipeline=None):
 
 
 def medspacy_classify_batch(
-    all_row_texts: list[list[tuple[str, str]]], 
-    nlp_pipeline=None, 
-    batch_size: int = 32
+    texts: list[str],
+    nlp,
+    batch_size: int = 64,
+    col_sources: list[str] = None,  # NEW: Track which column each text came from
 ) -> tuple[list[str], list[str]]:
     """
-    Batch process multiple rows of (text, column_name) pairs with MedSpacy.
+    Batch classify texts using MedSpaCy pipeline.
     
     Args:
-        all_row_texts: List of [(text, col_name), ...] per row
-        nlp_pipeline: MedSpacy pipeline (uses global if None)
-        batch_size: Number of rows to process at once
-        
-    Returns:
-        Tuple of (labels, reasons) - two parallel lists
-    """
-    if nlp_pipeline is None:
-        nlp_pipeline = get_nlp()
+        texts: List of text strings to classify
+        nlp: Initialized MedSpaCy pipeline
+        batch_size: Batch size for processing
+        col_sources: Optional list indicating which column each text came from
+                    (e.g., ["disease", "tissue", "source_name", ...])
     
+    Returns:
+        Tuple of (labels, reasons) lists
+    """
     labels = []
     reasons = []
     
-    for i in range(0, len(all_row_texts), batch_size):
-        batch = all_row_texts[i:i + batch_size]
-        
-        for row_texts in batch:
-            if not row_texts:
-                labels.append("NO_SIGNAL")
-                reasons.append("No text to analyze")
-                continue
-            
-            cancer_found = False
-            non_cancer_found = False
-            negation_found = False
-            detected_terms = []  # Will store "term (column)" strings
-            
-            for text, col_name in row_texts:
-                if not text or not text.strip():
-                    continue
-                doc = nlp_pipeline(text)
-                for ent in doc.ents:
-                    if ent.label_ == "CANCER":
-                        if ent._.is_negated:
-                            negation_found = True
-                            detected_terms.append(f"negated:{ent.text} ({col_name})")
-                        else:
-                            cancer_found = True
-                            detected_terms.append(f"{ent.text} ({col_name})")
-                    elif ent.label_ == "NON_CANCER":
-                        if not ent._.is_negated:
-                            non_cancer_found = True
-                            detected_terms.append(f"non-cancer:{ent.text} ({col_name})")
-            
-            # Decision logic
-            if cancer_found and not negation_found:
-                labels.append("CANCER")
-                reasons.append(f"Detected: {', '.join(detected_terms)}")
-            elif non_cancer_found and not cancer_found:
-                labels.append("NOT_CANCER")
-                reasons.append(f"Non-cancer terms: {', '.join(detected_terms)}")
-            elif cancer_found and non_cancer_found:
-                labels.append("UNCERTAIN")
-                reasons.append(f"Mixed signals: {', '.join(detected_terms)}")
-            elif negation_found:
-                labels.append("NOT_CANCER")
-                reasons.append(f"Negated cancer terms: {', '.join(detected_terms)}")
-            else:
-                labels.append("NO_SIGNAL")
-                reasons.append("No cancer-related terms detected")
+    # Track disease column non-cancer signals separately
+    disease_has_non_cancer = False
+    disease_non_cancer_term = None
     
-    return labels, reasons
-
+    for i, doc in enumerate(nlp.pipe(texts, batch_size=batch_size)):
+        cancer_terms = []
+        non_cancer_terms = []
+        negated_cancer_terms = []
+        
+        for ent in doc.ents:
+            if ent.label_ == "CANCER":
+                if ent._.is_negated:
+                    negated_cancer_terms.append(ent.text)
+                else:
+                    cancer_terms.append(ent.text)
+            elif ent.label_ == "NON_CANCER":
+                if not ent._.is_negated:
+                    non_cancer_terms.append(ent.text)
+        
+        # Check if this text is from the disease column
+        is_disease_col = col_sources and i < len(col_sources) and col_sources[i] == "disease"
+        
+        # If disease column has NON_CANCER signal, flag it
+        if is_disease_col and (non_cancer_terms or negated_cancer_terms):
+            disease_has_non_cancer = True
+            disease_non_cancer_term = non_cancer_terms[0] if non_cancer_terms else f"not {negated_cancer_terms[0]}"
+        
+        # Determine label for this text
+        if cancer_terms and not negated_cancer_terms and not non_cancer_terms:
+            labels.append("CANCER")
+            reasons.append(f"affirmed: {', '.join(cancer_terms)}")
+        elif non_cancer_terms or negated_cancer_terms:
+            labels.append("NON_CANCER")
+            reason_parts = []
+            if non_cancer_terms:
+                reason_parts.append(f"non-cancer: {', '.join(non_cancer_terms)}")
+            if negated_cancer_terms:
+                reason_parts.append(f"negated: {', '.join(negated_cancer_terms)}")
+            reasons.append("; ".join(reason_parts))
+        else:
+            labels.append("NO_SIGNAL")
+            reasons.append("no entities detected")
+    
+    return labels, reasons, disease_has_non_cancer, disease_non_cancer_term
 
 
 def resolve_uncertain(
@@ -329,7 +320,6 @@ def resolve_uncertain(
     return (final, regex_label, med_label, regex_reason, med_reason)
 
 
-# TODO: add "non" to negated
 def get_default_target_rules():
     """
     Returns the default cancer and non-cancer target rules.
@@ -339,58 +329,58 @@ def get_default_target_rules():
     """
     from medspacy.ner import TargetRule
     
-    # Cancer rules
+    # Cancer rules - all with IS_ALPHA guards where applicable
     cancer_rules = [
         # General cancer terms
         TargetRule(
             literal="cancer",
             category="CANCER",
-            pattern=[{"LOWER": "cancer"}]
+            pattern=[{"LOWER": "cancer", "IS_ALPHA": True}]
         ),
         TargetRule(
             literal="tumor",
             category="CANCER",
-            pattern=[{"LOWER": {"IN": ["tumor", "tumour", "tumors", "tumours"]}}]
+            pattern=[{"LOWER": {"IN": ["tumor", "tumour", "tumors", "tumours"]}, "IS_ALPHA": True}]
         ),
         TargetRule(
             literal="carcinoma",
             category="CANCER",
-            pattern=[{"LOWER": {"REGEX": "carcinomas?"}}]
+            pattern=[{"LOWER": {"REGEX": "carcinomas?"}, "IS_ALPHA": True}]
         ),
 
         # Specific cancer types
         TargetRule(
             literal="adenocarcinoma",
             category="CANCER",
-            pattern=[{"LOWER": {"REGEX": "adenocarcinomas?"}}]
+            pattern=[{"LOWER": {"REGEX": "adenocarcinomas?"}, "IS_ALPHA": True}]
         ),
         TargetRule(
             literal="squamous cell carcinoma",
             category="CANCER",
             pattern=[
-                {"LOWER": "squamous"},
-                {"LOWER": "cell"},
-                {"LOWER": {"REGEX": "carcinomas?"}}
+                {"LOWER": "squamous", "IS_ALPHA": True},
+                {"LOWER": "cell", "IS_ALPHA": True},
+                {"LOWER": {"REGEX": "carcinomas?"}, "IS_ALPHA": True}
             ]
         ),
         TargetRule(
             literal="small cell carcinoma",
             category="CANCER",
             pattern=[
-                {"LOWER": "small"},
-                {"LOWER": "cell"},
-                {"LOWER": {"REGEX": "carcinomas?"}}
+                {"LOWER": "small", "IS_ALPHA": True},
+                {"LOWER": "cell", "IS_ALPHA": True},
+                {"LOWER": {"REGEX": "carcinomas?"}, "IS_ALPHA": True}
             ]
         ),
         TargetRule(
             literal="non-small cell carcinoma",
             category="CANCER",
             pattern=[
-                {"LOWER": "non"},
+                {"LOWER": "non", "IS_ALPHA": True},
                 {"IS_PUNCT": True, "OP": "?"},
-                {"LOWER": "small"},
-                {"LOWER": "cell"},
-                {"LOWER": {"REGEX": "carcinomas?"}}
+                {"LOWER": "small", "IS_ALPHA": True},
+                {"LOWER": "cell", "IS_ALPHA": True},
+                {"LOWER": {"REGEX": "carcinomas?"}, "IS_ALPHA": True}
             ]
         ),
 
@@ -398,20 +388,20 @@ def get_default_target_rules():
         TargetRule(
             literal="leukemia",
             category="CANCER",
-            pattern=[{"LOWER": {"REGEX": "leuk[ae]mias?"}}]
+            pattern=[{"LOWER": {"REGEX": "leuk[ae]mias?"}, "IS_ALPHA": True}]
         ),
         TargetRule(
             literal="lymphoma",
             category="CANCER",
-            pattern=[{"LOWER": {"REGEX": "lymphomas?"}}]
+            pattern=[{"LOWER": {"REGEX": "lymphomas?"}, "IS_ALPHA": True}]
         ),
         TargetRule(
             literal="acute myeloid leukemia",
             category="CANCER",
             pattern=[
-                {"LOWER": "acute"},
-                {"LOWER": "myeloid"},
-                {"LOWER": {"REGEX": "leuk[ae]mias?"}}
+                {"LOWER": "acute", "IS_ALPHA": True},
+                {"LOWER": "myeloid", "IS_ALPHA": True},
+                {"LOWER": {"REGEX": "leuk[ae]mias?"}, "IS_ALPHA": True}
             ]
         ),
 
@@ -419,49 +409,49 @@ def get_default_target_rules():
         TargetRule(
             literal="sarcoma",
             category="CANCER",
-            pattern=[{"LOWER": {"REGEX": "sarcomas?"}}]
+            pattern=[{"LOWER": {"REGEX": "sarcomas?"}, "IS_ALPHA": True}]
         ),
         TargetRule(
             literal="osteosarcoma",
             category="CANCER",
-            pattern=[{"LOWER": {"REGEX": "osteosarcomas?"}}]
+            pattern=[{"LOWER": {"REGEX": "osteosarcomas?"}, "IS_ALPHA": True}]
         ),
 
         # Brain tumors
         TargetRule(
             literal="glioblastoma",
             category="CANCER",
-            pattern=[{"LOWER": {"REGEX": "glioblastomas?"}}]
+            pattern=[{"LOWER": {"REGEX": "glioblastomas?"}, "IS_ALPHA": True}]
         ),
         TargetRule(
             literal="glioma",
             category="CANCER",
-            pattern=[{"LOWER": {"REGEX": "gliomas?"}}]
+            pattern=[{"LOWER": {"REGEX": "gliomas?"}, "IS_ALPHA": True}]
         ),
 
         # Melanoma
         TargetRule(
             literal="melanoma",
             category="CANCER",
-            pattern=[{"LOWER": {"REGEX": "melanomas?"}}]
+            pattern=[{"LOWER": {"REGEX": "melanomas?"}, "IS_ALPHA": True}]
         ),
 
         # Malignancy terms
         TargetRule(
             literal="malignant",
             category="CANCER",
-            pattern=[{"LOWER": {"REGEX": r"(?<!pre[- ])malignan(t|cy)"}}]
+            pattern=[{"LOWER": {"REGEX": r"(?<!pre[- ])malignan(t|cy)"}, "IS_ALPHA": True}]
         ),
 
         TargetRule(
             literal="neoplasm",
             category="CANCER",
-            pattern=[{"LOWER": {"REGEX": "neoplasms?"}}]
+            pattern=[{"LOWER": {"REGEX": "neoplasms?"}, "IS_ALPHA": True}]
         ),
         TargetRule(
             literal="metastasis",
             category="CANCER",
-            pattern=[{"LOWER": {"REGEX": "metasta(sis|ses|tic)"}}]
+            pattern=[{"LOWER": {"REGEX": "metasta(sis|ses|tic)"}, "IS_ALPHA": True}]
         ),
 
         # Context-dependent patterns
@@ -469,16 +459,16 @@ def get_default_target_rules():
             literal="malignant tissue",
             category="CANCER",
             pattern=[
-                {"LOWER": "malignant"},
-                {"LOWER": {"IN": ["tissue", "cells", "lesion", "mass"]}}
+                {"LOWER": "malignant", "IS_ALPHA": True},
+                {"LOWER": {"IN": ["tissue", "cells", "lesion", "mass"]}, "IS_ALPHA": True}
             ]
         ),
         TargetRule(
             literal="cancerous tissue",
             category="CANCER",
             pattern=[
-                {"LOWER": "cancerous"},
-                {"LOWER": {"IN": ["tissue", "cells", "lesion", "mass"]}}
+                {"LOWER": "cancerous", "IS_ALPHA": True},
+                {"LOWER": {"IN": ["tissue", "cells", "lesion", "mass"]}, "IS_ALPHA": True}
             ]
         ),
 
@@ -486,7 +476,7 @@ def get_default_target_rules():
         TargetRule(
             literal="oncology",
             category="CANCER",
-            pattern=[{"LOWER": {"REGEX": "oncolog(y|ic|ical)"}}],
+            pattern=[{"LOWER": {"REGEX": "oncolog(y|ic|ical)"}, "IS_ALPHA": True}],
         ),
 
         # Cell line patterns
@@ -494,9 +484,9 @@ def get_default_target_rules():
             literal="cancer cell line",
             category="CANCER",
             pattern=[
-                {"LOWER": {"IN": ["cancer", "tumor", "tumour"]}},
-                {"LOWER": "cell"},
-                {"LOWER": {"IN": ["line", "lines"]}}
+                {"LOWER": {"IN": ["cancer", "tumor", "tumour"]}, "IS_ALPHA": True},
+                {"LOWER": "cell", "IS_ALPHA": True},
+                {"LOWER": {"IN": ["line", "lines"]}, "IS_ALPHA": True}
             ]
         ),
 
@@ -504,22 +494,19 @@ def get_default_target_rules():
             literal="TIL",
             category="CANCER",
             pattern=[
-                {"LOWER": {"IN": ["til", "tils", "t-i-l", "t.i.l.", "t.i.l.s."]}},
-                {"LOWER": {"IN": ["tumor", "tumour"]}, "OP": "?"},
-                {"LOWER": {"IN": ["infiltrating", "infiltrated"]}, "OP": "?"},
-                {"LOWER": "lymphocytes", "OP": "?"},
+                {"LOWER": {"IN": ["til", "tils"]}, "IS_ALPHA": True},
             ]
         )
     ]
 
-    # Non-cancer rules
+    # Non-cancer rules - all with IS_ALPHA guards
     non_cancer_rules = [
         TargetRule(
             literal="normal tissue",
             category="NON_CANCER",
             pattern=[
-                {"LOWER": {"IN": ["normal", "healthy", "control", "benign", "adjacent"]}},
-                {"LOWER": {"IN": ["tissue", "sample", "cells", "fat", "pad", "organ"]}, "OP": "?"}
+                {"LOWER": {"IN": ["normal", "healthy", "control", "benign", "adjacent"]}, "IS_ALPHA": True},
+                {"LOWER": {"IN": ["tissue", "sample", "cells", "fat", "pad", "organ"]}, "OP": "?", "IS_ALPHA": True}
             ]
         ),
 
@@ -527,16 +514,34 @@ def get_default_target_rules():
             literal="benign lesion",
             category="NON_CANCER",
             pattern=[
-                {"LOWER": "benign"},
-                {"LOWER": {"IN": ["lesion", "mass", "tumor", "tumour"]}}
+                {"LOWER": "benign", "IS_ALPHA": True},
+                {"LOWER": {"IN": ["lesion", "mass", "tumor", "tumour"]}, "IS_ALPHA": True}
             ]
         ),
 
         TargetRule(
             literal="premalignant",
             category="NON_CANCER",
-            pattern=[{"LOWER": {"REGEX": "pre[- ]?malignan(t|cy)"}}]
-        )
+            pattern=[{"LOWER": {"REGEX": "pre[- ]?malignan(t|cy)"}, "IS_ALPHA": True}]
+        ),
+        # TODO: look at this and see if there is a better resolution for negating the non- prefix
+        # Explicit non-cancer patterns (these override cancer term matching, )
+        # TargetRule("non-tumor", "NON_CANCER"),
+        # TargetRule("non tumor", "NON_CANCER"),
+        TargetRule("non-tumor tissue", "NON_CANCER"),
+        TargetRule("adenoma", "CANCER"),
+        TargetRule("meningioma", "CANCER"),
+        # TargetRule("non-tumour", "NON_CANCER"),
+        # TargetRule("non tumour", "NON_CANCER"),
+        # TargetRule("non-cancer", "NON_CANCER"),
+        # TargetRule("non cancer", "NON_CANCER"),
+        # TargetRule("non-cancerous", "NON_CANCER"),
+        # TargetRule("non-malignant", "NON_CANCER"),
+        # TargetRule("non malignant", "NON_CANCER"),
+        # TargetRule("non-neoplastic", "NON_CANCER"),
+        # TargetRule("non-metastatic", "NON_CANCER"),
+        # TargetRule("non-lymphoma", "NON_CANCER"),
+        # TargetRule("non lymphoma", "NON_CANCER"),
     ]
 
     return cancer_rules, non_cancer_rules
@@ -546,6 +551,8 @@ def initialize_medspacy_pipeline(*rule_lists):
     """
     Initialize medspacy pipeline with provided target rules.
     
+    OPTIMIZED: Disables unused pipeline components for speed.
+    
     Args:
         *rule_lists: Variable number of rule lists to add to the pipeline.
                      Each list should contain TargetRule objects.
@@ -553,23 +560,12 @@ def initialize_medspacy_pipeline(*rule_lists):
     
     Returns:
         nlp: The configured medspacy pipeline.
-    
-    Example:
-        # Use default rules
-        nlp = initialize_medspacy_pipeline()
-        
-        # Use custom rules
-        cancer_rules, non_cancer_rules = get_default_target_rules()
-        nlp = initialize_medspacy_pipeline(cancer_rules, non_cancer_rules)
-        
-        # Use custom rules with additional rules
-        cancer_rules, non_cancer_rules = get_default_target_rules()
-        custom_rules = [...]
-        nlp = initialize_medspacy_pipeline(cancer_rules, non_cancer_rules, custom_rules)
     """
-
-    
-    nlp = medspacy.load(enable=["ner", "context"])
+    # OPTIMIZATION: Only enable what we need, disable everything else
+    nlp = medspacy.load(
+        enable=["ner", "context"],
+        disable=["parser", "tagger", "lemmatizer", "attribute_ruler"]
+    )
     tm = nlp.get_pipe("medspacy_target_matcher")
 
     # If no rule lists provided, use defaults
@@ -581,6 +577,14 @@ def initialize_medspacy_pipeline(*rule_lists):
     for rules in rule_lists:
         tm.add(rules)
 
+    # Add custom negation rules for "non-" prefix patterns
+    context = nlp.get_pipe("medspacy_context")
+    custom_context_rules = [
+        ConTextRule("non", "NEGATED_EXISTENCE", direction="forward", max_scope=1),
+        ConTextRule("non-", "NEGATED_EXISTENCE", direction="forward", max_scope=1),
+    ]
+    context.add(custom_context_rules)
+
     return nlp
 
 
@@ -588,99 +592,46 @@ def generate_disease_rules(unique_diseases, nlp, existing_rules):
     """
     Auto-generate TargetRules for a list of unique diseases.
     Returns a list of new TargetRule objects.
-
-    Extension point:
-        - ontology_id (ICD-10 / SNOMED / MeSH) can be added later
-          without changing matching logic.
+    
+    Filters out:
+    - Numeric-only diseases
+    - Very short diseases (< 2 alphabetic characters)
+    - Duplicates of existing rules
     """
 
     # Expanded, high-recall cancer keywords
-    # Use * suffix to indicate prefix / regex match
     KEYWORDS_CANCER = (
-        # Core malignancy
-        "cancer",
-        "malign*",
-        "malignant",
-        "neoplasm",
-        "neoplastic",
-        "oncolog*",
-        "oncogen*",
-
-        # Tumor morphology
-        "tumor",
-        "tumour",
-        "carcinoma",
-        "adenocarcinoma",
-        "squamous cell carcinoma",
-        "basal cell carcinoma",
-        "sarcoma",
-        "osteosarcoma",
-        "chondrosarcoma",
-        "liposarcoma",
-        "glioma",
-        "astrocytoma",
-        "oligodendroglioma",
-        "blastoma",
-        "neuroblastoma",
-        "retinoblastoma",
-        "melanoma",
-        "mesothelioma",
-        "thelioma",
-        "myeloma",
-        "plasmacytoma",
-
-        # Hematologic
-        "leuk*",
-        "leukemia",
-        "lymphoma",
-        "hodgkin",
-        "non hodgkin",
-        "myelodysplastic",
-        "myeloproliferative",
-
-        # Organ-specific (common)
-        "breast cancer",
-        "lung cancer",
-        "colon cancer",
-        "colorectal cancer",
-        "prostate cancer",
-        "pancreatic cancer",
-        "hepatic cancer",
-        "hepatocellular carcinoma",
-        "renal cancer",
-        "kidney cancer",
-        "bladder cancer",
-        "ovarian cancer",
-        "cervical cancer",
-        "endometrial cancer",
-        "thyroid cancer",
-        "brain tumor",
-        "cns tumor",
-
-        # Progression / severity
-        "metast*",
-        "metastatic",
-        "metastasis",
-        "invasive",
-        "advanced cancer",
-        "recurrent",
-        "relapsed",
-        "progression",
+        "cancer", "malign*", "malignant", "neoplasm", "neoplastic",
+        "oncolog*", "oncogen*", "tumor", "tumour", "carcinoma",
+        "adenocarcinoma", "squamous cell carcinoma", "basal cell carcinoma",
+        "sarcoma", "osteosarcoma", "chondrosarcoma", "liposarcoma",
+        "glioma", "astrocytoma", "oligodendroglioma", "blastoma",
+        "neuroblastoma", "retinoblastoma", "melanoma", "mesothelioma",
+        "thelioma", "myeloma", "plasmacytoma", "leuk*", "leukemia",
+        "lymphoma", "hodgkin", "non hodgkin", "myelodysplastic",
+        "myeloproliferative", "breast cancer", "lung cancer", "colon cancer",
+        "colorectal cancer", "prostate cancer", "pancreatic cancer",
+        "hepatic cancer", "hepatocellular carcinoma", "renal cancer",
+        "kidney cancer", "bladder cancer", "ovarian cancer", "cervical cancer",
+        "endometrial cancer", "thyroid cancer", "brain tumor", "cns tumor",
+        "metast*", "metastatic", "metastasis", "invasive", "advanced cancer",
+        "recurrent", "relapsed", "progression",
     )
 
     _skip_literals = {rule.literal.lower() for rule in existing_rules}
 
+    def _is_valid_disease_text(text: str) -> bool:
+        """Check if text is valid for creating a rule."""
+        if not text:
+            return False
+        alpha_chars = sum(1 for c in text if c.isalpha())
+        return alpha_chars >= 2
+
     def _phrase_to_pattern(phrase: str):
-        """
-        Converts a phrase into a spaCy Matcher pattern.
-        Supports:
-            - exact token matches
-            - prefix matching via '*' suffix
-        """
-        # Prefix / regex rule
+        """Converts a phrase into a spaCy Matcher pattern with IS_ALPHA guards."""
         if phrase.endswith("*"):
             prefix = phrase[:-1]
-            return [{"LOWER": {"REGEX": f"^{prefix}"}}]
+            return [{"LOWER": {"REGEX": f"^{prefix}"}, "IS_ALPHA": True}]
 
         doc = nlp.make_doc(phrase.lower())
         pattern = []
@@ -689,14 +640,13 @@ def generate_disease_rules(unique_diseases, nlp, existing_rules):
             if token.is_space:
                 continue
             if token.is_alpha:
-                pattern.append({"LOWER": token.lower_})
+                pattern.append({"LOWER": token.lower_, "IS_ALPHA": True})
             elif token.is_digit:
                 pattern.append({"LIKE_NUM": True})
             else:
                 pattern.append({"TEXT": token.text})
 
         return pattern
-
 
     auto_rules = []
     skipped_literals = []
@@ -705,20 +655,31 @@ def generate_disease_rules(unique_diseases, nlp, existing_rules):
         if disease is None:
             continue
         disease_str = str(disease).strip()
-        if not disease_str or disease_str.lower() in {"nan", "none", "null"}:
+        
+        if not disease_str or disease_str.lower() in {"nan", "none", "null", ""}:
+            skipped_literals.append(disease_str)
             continue
+        
+        if not _is_valid_disease_text(disease_str):
+            skipped_literals.append(disease_str)
+            continue
+        
         norm_literal = disease_str.lower()
         if norm_literal in _skip_literals:
             skipped_literals.append(disease_str)
             continue
+            
         pattern = _phrase_to_pattern(disease_str)
         if not pattern:
+            skipped_literals.append(disease_str)
             continue
+            
         category = (
             "CANCER"
             if any(kw.rstrip("*") in norm_literal for kw in KEYWORDS_CANCER)
             else "NON_CANCER"
         )
+        
         auto_rules.append(
             TargetRule(
                 literal=disease_str,
@@ -726,8 +687,9 @@ def generate_disease_rules(unique_diseases, nlp, existing_rules):
                 pattern=pattern,
             )
         )
+        _skip_literals.add(norm_literal)
 
-    return auto_rules, skipped_literals  # <-- Make sure this exists!
+    return auto_rules, skipped_literals
 
 
 # Global nlp instance (initialize once when module is imported)
@@ -741,6 +703,7 @@ def get_nlp():
         nlp = initialize_medspacy_pipeline()
     return nlp
 
+
 # ============================================================================
 # TEXT PREPROCESSING - Column Discovery & Normalization
 # ============================================================================
@@ -753,20 +716,6 @@ def identify_candidate_text_columns(
 ) -> list[str]:
     """
     Step 1: Identify candidate text columns using cheap heuristics.
-    
-    Filters 1000 columns → ~50-150 candidates based on:
-    - dtype is string/Utf8
-    - average string length > threshold
-    - % non-null above threshold
-    
-    Args:
-        df: Input DataFrame
-        min_avg_length: Minimum average string length to consider (default 10 chars)
-        min_non_null_pct: Minimum fraction of non-null values (default 1%)
-        exclude_patterns: Column name patterns to exclude (e.g., ['_id', 'accession'])
-    
-    Returns:
-        List of candidate column names suitable for text analysis
     """
     if exclude_patterns is None:
         exclude_patterns = ["_id", "accession", "uuid", "hash", "checksum", "md5", "sha"]
@@ -775,23 +724,19 @@ def identify_candidate_text_columns(
     n_rows = len(df)
     
     for col in df.columns:
-        # Skip non-string columns
         if df[col].dtype != pl.Utf8:
             continue
         
-        # Skip columns matching exclude patterns
         col_lower = col.lower()
         if any(pattern in col_lower for pattern in exclude_patterns):
             continue
         
-        # Calculate non-null percentage
         non_null_count = df[col].drop_nulls().len()
         non_null_pct = non_null_count / n_rows if n_rows > 0 else 0
         
         if non_null_pct < min_non_null_pct:
             continue
         
-        # Calculate average string length (on non-null values)
         avg_length = (
             df.select(
                 pl.col(col)
@@ -813,28 +758,14 @@ def identify_candidate_text_columns(
 def normalize_text_column(col_expr: pl.Expr) -> pl.Expr:
     """
     Step 2: Normalize text aggressively for a single column expression.
-    
-    Transformations:
-    - Cast to string
-    - Fill nulls with empty string
-    - Lowercase
-    - Strip punctuation (except hyphens within words)
-    - Collapse whitespace
-    - Strip leading/trailing whitespace
-    
-    Args:
-        col_expr: Polars column expression
-    
-    Returns:
-        Normalized column expression
     """
     return (
         col_expr.cast(pl.Utf8)
         .fill_null("")
         .str.to_lowercase()
-        .str.replace_all(r"[_/|\\]", " ")  # Replace common separators with space
-        .str.replace_all(r"[^\w\s\-]", "")  # Remove punctuation (keep hyphens)
-        .str.replace_all(r"\s+", " ")  # Collapse whitespace
+        .str.replace_all(r"[_/|\\]", " ")
+        .str.replace_all(r"[^\w\s\-]", "")
+        .str.replace_all(r"\s+", " ")
         .str.strip_chars()
     )
 
@@ -848,20 +779,7 @@ def preprocess_text_columns(
 ) -> Tuple[pl.DataFrame, list[str]]:
     """
     Full text preprocessing pipeline: discover candidates + normalize.
-    
-    Args:
-        df: Input DataFrame
-        columns: Specific columns to normalize. If None, auto-discovers candidates.
-        suffix: Suffix for normalized column names (default "_normalized")
-        min_avg_length: For auto-discovery, minimum average string length
-        min_non_null_pct: For auto-discovery, minimum non-null percentage
-    
-    Returns:
-        Tuple of:
-        - DataFrame with normalized columns added
-        - List of normalized column names
     """
-    # Step 1: Identify candidates if not specified
     if columns is None:
         columns = identify_candidate_text_columns(
             df, 
@@ -869,13 +787,11 @@ def preprocess_text_columns(
             min_non_null_pct=min_non_null_pct
         )
     else:
-        # Filter to only existing columns
         columns = [c for c in columns if c in df.columns]
     
     if not columns:
         return df, []
     
-    # Step 2: Normalize all candidate columns
     normalized_cols = []
     for col in columns:
         norm_col_name = f"{col}{suffix}"
@@ -890,15 +806,6 @@ def preprocess_text_columns(
 def get_text_column_stats(df: pl.DataFrame) -> pl.DataFrame:
     """
     Utility: Get statistics for all string columns to help tune thresholds.
-    
-    Returns DataFrame with columns:
-    - column_name
-    - dtype
-    - non_null_count
-    - non_null_pct
-    - avg_length
-    - max_length
-    - unique_count
     """
     stats = []
     n_rows = len(df)
@@ -920,4 +827,4 @@ def get_text_column_stats(df: pl.DataFrame) -> pl.DataFrame:
             "unique_count": col_data.n_unique(),
         })
 
-        return pl.DataFrame(stats).sort("avg_length", descending=True)
+    return pl.DataFrame(stats).sort("avg_length", descending=True)
