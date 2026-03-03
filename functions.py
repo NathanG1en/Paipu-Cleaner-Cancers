@@ -28,7 +28,11 @@ from config import (
     NON_CANCER_RULE_DEFINITIONS,
     ClassifierConfig,
     DEFAULT_CONFIG,
+    CONTEXT_RULE_DEFINITIONS,
 )
+
+import medspacy
+from medspacy.context import ConTextRule
 
 if TYPE_CHECKING:
     from spacy.language import Language
@@ -426,41 +430,73 @@ def medspacy_classify_batch(
 
 def _classify_doc(doc: "Doc") -> Dict[str, str]:
     """
-    Classify a processed spaCy Doc object.
+    Classify a single spaCy Doc based on medspacy entities.
     
-    Args:
-        doc: Processed MedSpaCy document.
-        
     Returns:
-        Dictionary with "label" and "reason" keys.
+        dict with keys: label, reason, entities (list of dicts)
     """
-    has_affirmed_cancer = False
-    has_negated_cancer = False
-    
+    cancer_count = 0
+    non_cancer_count = 0
+    negated_cancer_count = 0  # Track negated cancer terms
+    entities = []
+
     for ent in doc.ents:
         is_negated = getattr(ent._, "is_negated", False)
-        is_hypothetical = getattr(ent._, "is_hypothetical", False)
-        is_family = getattr(ent._, "is_family", False)
         
-        if is_hypothetical or is_family:
-            continue
-        
-        if ent.label_ in ("CANCER", "CANCER_TYPE"):
+        entities.append({
+            "text": ent.text,
+            "label": ent.label_,
+            "is_negated": is_negated,
+        })
+
+        # Count based on label and negation status
+        if ent.label_ == "CANCER":
             if is_negated:
-                has_negated_cancer = True
+                negated_cancer_count += 1
             else:
-                has_affirmed_cancer = True
+                cancer_count += 1
         elif ent.label_ == "NON_CANCER":
-            has_negated_cancer = True
+            non_cancer_count += 1
+
+    # Classification logic with negation awareness
+    # Priority 1: If we have negated cancer terms, likely non-cancer
+    if negated_cancer_count > 0 and cancer_count == 0:
+        return {
+            "label": "NON_CANCER",
+            "reason": f"negated_cancer_terms:{negated_cancer_count}",
+            "entities": entities,
+        }
     
-    if has_affirmed_cancer and not has_negated_cancer:
-        return {"label": "CANCER", "reason": "affirmed cancer entity"}
-    elif has_negated_cancer and not has_affirmed_cancer:
-        return {"label": "NON_CANCER", "reason": "negated/non-cancer only"}
-    elif has_affirmed_cancer and has_negated_cancer:
-        return {"label": "CANCER", "reason": "mixed, affirmed present"}
-    else:
-        return {"label": "NO_SIGNAL", "reason": "no cancer entities"}
+    # Priority 2: If we have more negations than affirmed cancer terms
+    if negated_cancer_count > cancer_count:
+        return {
+            "label": "NON_CANCER", 
+            "reason": f"negation_dominant:neg={negated_cancer_count},affirm={cancer_count}",
+            "entities": entities,
+        }
+
+    # Priority 3: Affirmed cancer terms (after negation check)
+    if cancer_count > 0:
+        return {
+            "label": "CANCER",
+            "reason": f"cancer_terms:{cancer_count}",
+            "entities": entities,
+        }
+
+    # Priority 4: Non-cancer indicators
+    if non_cancer_count > 0:
+        return {
+            "label": "NON_CANCER",
+            "reason": f"non_cancer_terms:{non_cancer_count}",
+            "entities": entities,
+        }
+
+    # No signal
+    return {
+        "label": "NO_SIGNAL",
+        "reason": "no_relevant_terms",
+        "entities": entities,
+    }
 
 
 def resolve_uncertain(
@@ -548,31 +584,40 @@ def get_default_target_rules() -> Tuple[Tuple[TargetRule, ...], Tuple[TargetRule
 
 
 def initialize_medspacy_pipeline(
-    *rule_lists: Union[List[TargetRule], Tuple[TargetRule, ...]],
+    cancer_rules: List[TargetRule],
+    non_cancer_rules: List[TargetRule],
 ) -> "Language":
     """
-    Initialize and configure a MedSpaCy pipeline for cancer classification.
-    
-    Note: This creates a NEW pipeline each time. For singleton behavior,
-    use get_nlp() instead.
-    
-    Args:
-        *rule_lists: Variable number of TargetRule lists to add to the pipeline.
-        
-    Returns:
-        Configured spaCy Language pipeline with:
+    Initialize a MedSpaCy pipeline with:
         - medspacy_target_matcher (entity detection)
         - medspacy_context (negation/context detection)
+    
+    Args:
+        cancer_rules: List of TargetRule for cancer terms
+        non_cancer_rules: List of TargetRule for non-cancer terms
+    
+    Returns:
+        Configured MedSpaCy Language pipeline
     """
     import medspacy
+    from medspacy.context import ConTextRule
     
     nlp = medspacy.load(enable=["medspacy_target_matcher", "medspacy_context"])
     
-    # Add target rules
+    # Add cancer and non-cancer target rules
     target_matcher = nlp.get_pipe("medspacy_target_matcher")
-    for rule_list in rule_lists:
-        if rule_list:
-            target_matcher.add(list(rule_list))
+    target_matcher.add(cancer_rules + non_cancer_rules)
+    
+    # Get the context component and add custom negation rules from config
+    context = nlp.get_pipe("medspacy_context")
+    
+    # Build ConTextRule objects from config definitions
+    custom_negation_rules = [
+        ConTextRule(literal, category, direction=direction)
+        for literal, category, direction in CONTEXT_RULE_DEFINITIONS
+    ]
+    
+    context.add(custom_negation_rules)
     
     return nlp
 

@@ -7,6 +7,8 @@ a dataclass-based configuration system for the classification pipeline.
 
 from dataclasses import dataclass, field
 from typing import Dict, FrozenSet, List, Tuple
+import medspacy
+from medspacy.context import ConTextRule
 
 
 @dataclass(frozen=True)
@@ -120,36 +122,36 @@ CANCER_RULE_DEFINITIONS: List[Tuple[str, str, str]] = [
     ("carcinoma", "CANCER", r"\bcarcinomas?\b"),
     ("neoplasm", "CANCER", r"\bneoplasms?\b"),
     ("metastasis", "CANCER", r"\bmetasta(?:s|t)(?:is|es)?\b"),
-    ("adenocarcinoma", "CANCER_TYPE", r"\badenocarcinomas?\b"),
-    ("sarcoma", "CANCER_TYPE", r"\bsarcomas?\b"),
-    ("leukemia", "CANCER_TYPE", r"\bleuk[ae]mias?\b"),
-    ("lymphoma", "CANCER_TYPE", r"\blymphomas?\b"),
-    ("glioblastoma", "CANCER_TYPE", r"\bglioblastomas?\b"),
-    ("melanoma", "CANCER_TYPE", r"\bmelanomas?\b"),
-    ("myeloma", "CANCER_TYPE", r"\bmyelomas?\b"),
-    ("neuroblastoma", "CANCER_TYPE", r"\bneuroblastomas?\b"),
+    ("adenocarcinoma", "CANCER", r"\badenocarcinomas?\b"),
+    ("sarcoma", "CANCER", r"\bsarcomas?\b"),
+    ("leukemia", "CANCER", r"\bleuk[ae]mias?\b"),
+    ("lymphoma", "CANCER", r"\blymphomas?\b"),
+    ("glioblastoma", "CANCER", r"\bglioblastomas?\b"),
+    ("melanoma", "CANCER", r"\bmelanomas?\b"),
+    ("myeloma", "CANCER", r"\bmyelomas?\b"),
+    ("neuroblastoma", "CANCER", r"\bneuroblastomas?\b"),
     ("oncogenic", "CANCER", r"\boncogen(?:ic|e|es)\b"),
     # Specific cancer types (literal match only, no pattern)
-    ("hepatocellular carcinoma", "CANCER_TYPE", ""),
-    ("breast cancer", "CANCER_TYPE", ""),
-    ("lung cancer", "CANCER_TYPE", ""),
-    ("colon cancer", "CANCER_TYPE", ""),
-    ("prostate cancer", "CANCER_TYPE", ""),
-    ("pancreatic cancer", "CANCER_TYPE", ""),
-    ("ovarian cancer", "CANCER_TYPE", ""),
-    ("bladder cancer", "CANCER_TYPE", ""),
-    ("skin cancer", "CANCER_TYPE", ""),
-    ("brain cancer", "CANCER_TYPE", ""),
-    ("liver cancer", "CANCER_TYPE", ""),
-    ("kidney cancer", "CANCER_TYPE", ""),
-    ("renal cell carcinoma", "CANCER_TYPE", ""),
-    ("squamous cell carcinoma", "CANCER_TYPE", ""),
-    ("basal cell carcinoma", "CANCER_TYPE", ""),
-    ("non-small cell lung cancer", "CANCER_TYPE", ""),
-    ("small cell lung cancer", "CANCER_TYPE", ""),
-    ("triple negative breast cancer", "CANCER_TYPE", ""),
-    ("HER2 positive", "CANCER_TYPE", ""),
-    ("ER positive", "CANCER_TYPE", ""),
+    ("hepatocellular carcinoma", "CANCER", ""),
+    ("breast cancer", "CANCER", ""),
+    ("lung cancer", "CANCER", ""),
+    ("colon cancer", "CANCER", ""),
+    ("prostate cancer", "CANCER", ""),
+    ("pancreatic cancer", "CANCER", ""),
+    ("ovarian cancer", "CANCER", ""),
+    ("bladder cancer", "CANCER", ""),
+    ("skin cancer", "CANCER", ""),
+    ("brain cancer", "CANCER", ""),
+    ("liver cancer", "CANCER", ""),
+    ("kidney cancer", "CANCER", ""),
+    ("renal cell carcinoma", "CANCER", ""),
+    ("squamous cell carcinoma", "CANCER", ""),
+    ("basal cell carcinoma", "CANCER", ""),
+    ("non-small cell lung cancer", "CANCER", ""),
+    ("small cell lung cancer", "CANCER", ""),
+    ("triple negative breast cancer", "CANCER", ""),
+    ("HER2 positive", "CANCER", ""),
+    ("ER positive", "CANCER", ""),
 ]
 
 NON_CANCER_RULE_DEFINITIONS: List[Tuple[str, str, str]] = [
@@ -215,3 +217,28 @@ SPECIFIC_CANCER_TYPES: FrozenSet[str] = frozenset({
     "carcinoma", "sarcoma", "lymphoma", "leukemia", "leukaemia",
     "melanoma", "glioma", "blastoma", "myeloma"
 })
+
+# =============================================================================
+# MedSpaCy Context Rule Definitions (negation detection)
+# =============================================================================
+# These are stored as tuples of (literal, category, direction) to avoid
+# importing medspacy in the config module. The actual ConTextRule objects
+# are created in functions.py during pipeline initialization.
+
+CONTEXT_RULE_DEFINITIONS: List[Tuple[str, str, str]] = [
+    # Prefix-based negations: (literal, category, direction)
+    ("non-", "NEGATED_EXISTENCE", "FORWARD"),
+    ("non -", "NEGATED_EXISTENCE", "FORWARD"),  # Handles tokenization of "non-X"
+    ("non", "NEGATED_EXISTENCE", "FORWARD"),    # Handles "non X" with space
+    
+    # Additional negation patterns
+    ("no", "NEGATED_EXISTENCE", "FORWARD"),
+    ("without", "NEGATED_EXISTENCE", "FORWARD"),
+    ("absence of", "NEGATED_EXISTENCE", "FORWARD"),
+    ("free of", "NEGATED_EXISTENCE", "FORWARD"),
+    ("negative for", "NEGATED_EXISTENCE", "FORWARD"),
+    ("no evidence of", "NEGATED_EXISTENCE", "FORWARD"),
+    ("ruled out", "NEGATED_EXISTENCE", "BACKWARD"),
+    ("denies", "NEGATED_EXISTENCE", "FORWARD"),
+    ("denied", "NEGATED_EXISTENCE", "FORWARD"),
+]
