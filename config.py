@@ -131,7 +131,11 @@ CANCER_RULE_DEFINITIONS: List[Tuple[str, str, str]] = [
     ("myeloma", "CANCER", r"\bmyelomas?\b"),
     ("neuroblastoma", "CANCER", r"\bneuroblastomas?\b"),
     ("oncogenic", "CANCER", r"\boncogen(?:ic|e|es)\b"),
+    ("adenoma", "CANCER", r"\badenomas?\b"),
+    ("osteosarcoma", "CANCER", r"\bosteosarcomas?\b"),
+    ("meningioma", "CANCER", r"\bmeningiomas?\b"),
     # Specific cancer types (literal match only, no pattern)
+    ("osteosarcoma", "CANCER", ""),
     ("hepatocellular carcinoma", "CANCER", ""),
     ("breast cancer", "CANCER", ""),
     ("lung cancer", "CANCER", ""),

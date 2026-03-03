@@ -308,38 +308,39 @@ def _apply_regex_classification(
 
 
 def medspacy_classify(
-    row_texts: str,
-    nlp_pipeline: Optional["Language"] = None,
+        row_texts: str,
+        nlp_pipeline: Optional["Language"] = None,
 ) -> Dict[str, Any]:
     """
     Classify a single text using MedSpaCy for negation and context detection.
-    
+
     Args:
         row_texts: Combined text string to classify.
         nlp_pipeline: Initialized MedSpaCy pipeline. Uses global if None.
-        
+
     Returns:
         Dictionary with keys:
         - label: "CANCER", "NON_CANCER", or "NO_SIGNAL"
-        - reason: Explanation of the classification
+        - reason: Explanation of the classification WITH ACTUAL TERMS
         - entities: List of detected entity dicts
     """
     if nlp_pipeline is None:
         nlp_pipeline = get_nlp()
-    
+
     if not row_texts or not _has_alphabetic(row_texts):
         return {
             "label": "NO_SIGNAL",
             "reason": "empty or no alphabetic content",
             "entities": [],
         }
-    
+
     doc = nlp_pipeline(row_texts)
-    
+
     entities: List[Dict[str, Any]] = []
-    has_affirmed_cancer = False
-    has_negated_cancer = False
-    
+    affirmed_cancer_terms: List[str] = []
+    negated_cancer_terms: List[str] = []
+    non_cancer_terms: List[str] = []
+
     for ent in doc.ents:
         ent_info = {
             "text": ent.text,
@@ -349,33 +350,48 @@ def medspacy_classify(
             "is_historical": getattr(ent._, "is_family", False),
         }
         entities.append(ent_info)
-        
+
         # Only count non-hypothetical, non-family mentions
         if ent_info["is_hypothetical"] or ent_info["is_family"]:
             continue
-            
+
         if ent.label_ in ("CANCER", "CANCER_TYPE"):
             if ent_info["is_negated"]:
-                has_negated_cancer = True
+                negated_cancer_terms.append(ent.text)
             else:
-                has_affirmed_cancer = True
+                affirmed_cancer_terms.append(ent.text)
         elif ent.label_ == "NON_CANCER":
-            has_negated_cancer = True
-    
-    # Determine label
-    if has_affirmed_cancer and not has_negated_cancer:
+            non_cancer_terms.append(ent.text)
+
+    # Determine label WITH ACTUAL TERMS
+    has_affirmed = len(affirmed_cancer_terms) > 0
+    has_negated = len(negated_cancer_terms) > 0
+    has_non_cancer = len(non_cancer_terms) > 0
+
+    if has_affirmed and not has_negated and not has_non_cancer:
+        # Pure cancer signal
+        terms_str = ", ".join(set(affirmed_cancer_terms))
         label = "CANCER"
-        reason = "affirmed cancer entity detected"
-    elif has_negated_cancer and not has_affirmed_cancer:
+        reason = f"cancer_terms: {terms_str}"
+
+    elif has_negated and not has_affirmed:
+        # Pure non-cancer signal
+        terms_list = negated_cancer_terms + non_cancer_terms
+        terms_str = ", ".join(set(terms_list))
         label = "NON_CANCER"
-        reason = "only negated/non-cancer entities"
-    elif has_affirmed_cancer and has_negated_cancer:
-        label = "CANCER"  # Affirmed takes precedence
-        reason = "mixed signals, affirmed cancer present"
+        reason = f"negated/non-cancer_terms: {terms_str}"
+
+    elif has_affirmed and (has_negated or has_non_cancer):
+        # Mixed signals - affirmed takes precedence
+        affirmed_str = ", ".join(set(affirmed_cancer_terms))
+        negated_str = ", ".join(set(negated_cancer_terms + non_cancer_terms))
+        label = "CANCER"
+        reason = f"mixed (affirmed: {affirmed_str}; negated: {negated_str})"
+
     else:
         label = "NO_SIGNAL"
         reason = "no cancer-related entities detected"
-    
+
     return {
         "label": label,
         "reason": reason,
@@ -384,54 +400,69 @@ def medspacy_classify(
 
 
 def medspacy_classify_batch(
-    df: pl.DataFrame,
-    nlp_pipeline: "Language",
-    batch_size: int = DEFAULT_CONFIG.batch_size,
-    priority_cols: Union[Tuple[str, ...], List[str]] = PRIORITY_COLS,
-    use_normalized: bool = True,
+        df: pl.DataFrame,
+        nlp_pipeline: "Language",
+        batch_size: int = DEFAULT_CONFIG.batch_size,
+        priority_cols: Union[Tuple[str, ...], List[str]] = PRIORITY_COLS,
+        use_normalized: bool = True,
 ) -> pl.DataFrame:
     """
     Apply MedSpaCy classification to a DataFrame in batches.
-    
-    Args:
-        df: Input DataFrame.
-        nlp_pipeline: Initialized MedSpaCy Language pipeline.
-        batch_size: Number of documents per batch (for nlp.pipe()).
-        priority_cols: Columns to extract text from.
-        use_normalized: Whether to use "_norm" suffixed columns.
-        
-    Returns:
-        DataFrame with med_label and med_reason columns added.
+    Now tracks which columns contain the matched terms.
     """
-    # Prepare text for each row
     rows_as_dicts = df.to_dicts()
-    texts: List[str] = [
-        clean_texts(row, tuple(priority_cols), use_normalized)
-        for row in rows_as_dicts
-    ]
-    
-    # Process in batches using nlp.pipe for efficiency
+
     labels: List[str] = []
     reasons: List[str] = []
-    
-    for doc in nlp_pipeline.pipe(texts, batch_size=batch_size):
+    source_cols: List[str] = []  # NEW: Track source columns
+
+    for row in rows_as_dicts:
+        # Process each column individually to track sources
+        all_results = []
+        found_in_cols = []
+
+        suffix = "_norm" if use_normalized else ""
+        for col in priority_cols:
+            col_key = f"{col}{suffix}"
+            text = row.get(col_key) or row.get(col) or ""
+
+            if isinstance(text, str) and text.strip() and _has_alphabetic(text):
+                doc = nlp_pipeline(text.strip().lower())
+                # Check if this doc has cancer entities
+                for ent in doc.ents:
+                    if ent.label_ in ("CANCER", "NON_CANCER") and not getattr(ent._, "is_negated", False):
+                        found_in_cols.append(f"{col}:{ent.text}")
+
+        # Now process combined text for overall classification
+        combined_text = clean_texts(row, tuple(priority_cols), use_normalized)
+        doc = nlp_pipeline(combined_text)
         result = _classify_doc(doc)
+
         labels.append(result["label"])
-        reasons.append(result["reason"])
-    
+
+        # Enhance reason with column info
+        if found_in_cols:
+            col_info = " | found_in: " + ", ".join(set(found_in_cols[:5]))  # Limit to 5
+            reasons.append(result["reason"] + col_info)
+            source_cols.append(", ".join(set([c.split(":")[0] for c in found_in_cols])))
+        else:
+            reasons.append(result["reason"])
+            source_cols.append("")
+
     # Add results to DataFrame
     df = df.with_columns([
         pl.Series("med_label", labels),
         pl.Series("med_reason", reasons),
+        pl.Series("med_source_columns", source_cols),  # NEW COLUMN
     ])
-    
+
     return df
 
 
 def _classify_doc(doc: "Doc") -> Dict[str, str]:
     """
     Classify a single spaCy Doc based on medspacy entities.
-    
+
     Returns:
         dict with keys: label, reason, entities (list of dicts)
     """
@@ -440,9 +471,14 @@ def _classify_doc(doc: "Doc") -> Dict[str, str]:
     negated_cancer_count = 0  # Track negated cancer terms
     entities = []
 
+    # Track actual terms found
+    cancer_terms = []
+    non_cancer_terms = []
+    negated_cancer_terms = []
+
     for ent in doc.ents:
         is_negated = getattr(ent._, "is_negated", False)
-        
+
         entities.append({
             "text": ent.text,
             "label": ent.label_,
@@ -453,41 +489,49 @@ def _classify_doc(doc: "Doc") -> Dict[str, str]:
         if ent.label_ == "CANCER":
             if is_negated:
                 negated_cancer_count += 1
+                negated_cancer_terms.append(ent.text)
             else:
                 cancer_count += 1
+                cancer_terms.append(ent.text)
         elif ent.label_ == "NON_CANCER":
             non_cancer_count += 1
+            non_cancer_terms.append(ent.text)
 
     # Classification logic with negation awareness
     # Priority 1: If we have negated cancer terms, likely non-cancer
     if negated_cancer_count > 0 and cancer_count == 0:
+        terms_str = ", ".join(set(negated_cancer_terms))  # Use set to deduplicate
         return {
             "label": "NON_CANCER",
-            "reason": f"negated_cancer_terms:{negated_cancer_count}",
+            "reason": f"negated_cancer_terms: {terms_str}",
             "entities": entities,
         }
-    
+
     # Priority 2: If we have more negations than affirmed cancer terms
     if negated_cancer_count > cancer_count:
+        neg_terms = ", ".join(set(negated_cancer_terms))
+        affirm_terms = ", ".join(set(cancer_terms)) if cancer_terms else "none"
         return {
-            "label": "NON_CANCER", 
-            "reason": f"negation_dominant:neg={negated_cancer_count},affirm={cancer_count}",
+            "label": "NON_CANCER",
+            "reason": f"negation_dominant (negated: {neg_terms}; affirmed: {affirm_terms})",
             "entities": entities,
         }
 
     # Priority 3: Affirmed cancer terms (after negation check)
     if cancer_count > 0:
+        terms_str = ", ".join(set(cancer_terms))
         return {
             "label": "CANCER",
-            "reason": f"cancer_terms:{cancer_count}",
+            "reason": f"cancer_terms: {terms_str}",
             "entities": entities,
         }
 
     # Priority 4: Non-cancer indicators
     if non_cancer_count > 0:
+        terms_str = ", ".join(set(non_cancer_terms))
         return {
             "label": "NON_CANCER",
-            "reason": f"non_cancer_terms:{non_cancer_count}",
+            "reason": f"non_cancer_terms: {terms_str}",
             "entities": entities,
         }
 
@@ -505,32 +549,32 @@ def resolve_uncertain(
 ) -> str:
     """
     Resolve final classification by combining regex and MedSpaCy results.
-    
+
     Priority logic:
     1. Confident regex labels take precedence
     2. MedSpaCy can upgrade uncertain cases
     3. Fallback to regex label
-    
+
     Args:
         regex_label: Classification from regex stage.
         med_label: Classification from MedSpaCy stage.
-        
+
     Returns:
         Final confidence category string.
     """
     regex_label = regex_label or "uncertain_no_signal"
     med_label = med_label or "NO_SIGNAL"
-    
+
     # High confidence regex results
     if regex_label == "confident_cancer":
         return "confident_cancer"
-    
+
     if regex_label == "likely_non_cancer":
         # Check if MedSpaCy found cancer
         if med_label == "CANCER":
             return "confirmed_by_medspacy"
         return "confirmed_non_cancer"
-    
+
     # Likely cancer - verify with MedSpaCy
     if regex_label == "likely_cancer":
         if med_label == "CANCER":
@@ -538,7 +582,7 @@ def resolve_uncertain(
         elif med_label == "NON_CANCER":
             return "likely_non_cancer"
         return "likely_cancer"  # Trust regex
-    
+
     # Uncertain cases - rely on MedSpaCy
     if regex_label.startswith("uncertain"):
         if med_label == "CANCER":
@@ -546,7 +590,7 @@ def resolve_uncertain(
         elif med_label == "NON_CANCER":
             return "likely_non_cancer"
         return regex_label  # Keep uncertain
-    
+
     return regex_label
 
 
@@ -558,9 +602,9 @@ def resolve_uncertain(
 def get_default_target_rules() -> Tuple[Tuple[TargetRule, ...], Tuple[TargetRule, ...]]:
     """
     Get default TargetRules for cancer and non-cancer entity detection.
-    
+
     This function is cached to avoid recreating rules on every call.
-    
+
     Returns:
         Tuple of (cancer_rules, non_cancer_rules) where each is a tuple
         of TargetRule objects for the MedSpaCy target matcher.
@@ -571,14 +615,14 @@ def get_default_target_rules() -> Tuple[Tuple[TargetRule, ...], Tuple[TargetRule
             cancer_rules.append(TargetRule(literal, category, pattern=pattern))
         else:
             cancer_rules.append(TargetRule(literal, category))
-    
+
     non_cancer_rules: List[TargetRule] = []
     for literal, category, pattern in NON_CANCER_RULE_DEFINITIONS:
         if pattern:
             non_cancer_rules.append(TargetRule(literal, category, pattern=pattern))
         else:
             non_cancer_rules.append(TargetRule(literal, category))
-    
+
     # Return as tuples for hashability (needed for lru_cache)
     return tuple(cancer_rules), tuple(non_cancer_rules)
 
@@ -591,58 +635,58 @@ def initialize_medspacy_pipeline(
     Initialize a MedSpaCy pipeline with:
         - medspacy_target_matcher (entity detection)
         - medspacy_context (negation/context detection)
-    
+
     Args:
         cancer_rules: List of TargetRule for cancer terms
         non_cancer_rules: List of TargetRule for non-cancer terms
-    
+
     Returns:
         Configured MedSpaCy Language pipeline
     """
     import medspacy
     from medspacy.context import ConTextRule
-    
+
     nlp = medspacy.load(enable=["medspacy_target_matcher", "medspacy_context"])
-    
+
     # Add cancer and non-cancer target rules
     target_matcher = nlp.get_pipe("medspacy_target_matcher")
     target_matcher.add(cancer_rules + non_cancer_rules)
-    
+
     # Get the context component and add custom negation rules from config
     context = nlp.get_pipe("medspacy_context")
-    
+
     # Build ConTextRule objects from config definitions
     custom_negation_rules = [
         ConTextRule(literal, category, direction=direction)
         for literal, category, direction in CONTEXT_RULE_DEFINITIONS
     ]
-    
+
     context.add(custom_negation_rules)
-    
+
     return nlp
 
 
 class NLPPipelineManager:
     """
     Singleton manager for the MedSpaCy NLP pipeline.
-    
+
     This class provides thread-safe lazy initialization of the NLP pipeline
     and allows for customization with additional rules.
-    
+
     Usage:
         # Get the default pipeline
         nlp = NLPPipelineManager.get_pipeline()
-        
+
         # Get a pipeline with custom rules
         nlp = NLPPipelineManager.get_pipeline(additional_rules=[...])
-        
+
         # Reset the pipeline (e.g., to add new rules)
         NLPPipelineManager.reset()
     """
-    
+
     _instance: Optional["Language"] = None
     _additional_rules: List[TargetRule] = []
-    
+
     @classmethod
     def get_pipeline(
         cls,
@@ -650,31 +694,31 @@ class NLPPipelineManager:
     ) -> "Language":
         """
         Get or create the singleton NLP pipeline.
-        
+
         Args:
             additional_rules: Extra TargetRules to add to the pipeline.
                              Only applied on first initialization or after reset().
-        
+
         Returns:
             Initialized MedSpaCy Language pipeline.
         """
         if cls._instance is None:
             cancer_rules, non_cancer_rules = get_default_target_rules()
             cls._instance = initialize_medspacy_pipeline(cancer_rules, non_cancer_rules)
-            
+
             # Add any additional rules
             if additional_rules:
                 cls._additional_rules = additional_rules
                 target_matcher = cls._instance.get_pipe("medspacy_target_matcher")
                 target_matcher.add(additional_rules)
-        
+
         return cls._instance
-    
+
     @classmethod
     def add_rules(cls, rules: List[TargetRule]) -> None:
         """
         Add rules to the existing pipeline.
-        
+
         Args:
             rules: TargetRules to add.
         """
@@ -682,17 +726,17 @@ class NLPPipelineManager:
         target_matcher = pipeline.get_pipe("medspacy_target_matcher")
         target_matcher.add(rules)
         cls._additional_rules.extend(rules)
-    
+
     @classmethod
     def reset(cls) -> None:
         """
         Reset the singleton pipeline.
-        
+
         Call this to force re-initialization on next get_pipeline() call.
         """
         cls._instance = None
         cls._additional_rules = []
-    
+
     @classmethod
     def get_rule_count(cls) -> int:
         """Get the number of rules in the current pipeline."""
@@ -705,21 +749,21 @@ class NLPPipelineManager:
 def get_nlp(additional_rules: Optional[List[TargetRule]] = None) -> "Language":
     """
     Get the singleton MedSpaCy pipeline.
-    
+
     This is the recommended way to get the NLP pipeline for classification.
     The pipeline is lazily initialized on first call and reused thereafter.
-    
+
     Args:
         additional_rules: Extra TargetRules to add on first initialization.
-        
+
     Returns:
         Initialized MedSpaCy Language pipeline.
-        
+
     Example:
         # Simple usage
         nlp = get_nlp()
         doc = nlp("breast cancer tissue sample")
-        
+
         # With additional rules
         from medspacy.ner import TargetRule
         custom_rules = [TargetRule("my_cancer_type", "CANCER_TYPE")]
@@ -731,7 +775,7 @@ def get_nlp(additional_rules: Optional[List[TargetRule]] = None) -> "Language":
 def reset_nlp() -> None:
     """
     Reset the singleton NLP pipeline.
-    
+
     Use this if you need to reinitialize the pipeline with different rules.
     """
     NLPPipelineManager.reset()
@@ -744,15 +788,15 @@ def generate_disease_rules(
 ) -> Tuple[List[TargetRule], List[str]]:
     """
     Auto-generate TargetRules from unique disease values in metadata.
-    
+
     Analyzes disease strings that aren't already covered by existing rules
     and creates new rules for cancer-related diseases.
-    
+
     Args:
         unique_diseases: List of unique disease values from the dataset.
         nlp: Initialized MedSpaCy pipeline for checking existing coverage.
         existing_rules: Rules already in the pipeline (to avoid duplicates).
-        
+
     Returns:
         Tuple of:
         - new_rules: List of auto-generated TargetRule objects
@@ -760,42 +804,42 @@ def generate_disease_rules(
     """
     new_rules: List[TargetRule] = []
     skipped: List[str] = []
-    
+
     # Get existing rule literals for comparison
     existing_literals = {
-        rule.literal.lower() 
-        for rule in existing_rules 
+        rule.literal.lower()
+        for rule in existing_rules
         if hasattr(rule, "literal") and rule.literal
     }
-    
+
     for disease in unique_diseases:
         if disease is None or not isinstance(disease, str):
             continue
-            
+
         disease_clean = disease.strip().lower()
-        
+
         if not disease_clean or disease_clean in ("nan", "none", "na", "n/a"):
             continue
-        
+
         # Skip if already covered
         if disease_clean in existing_literals:
             skipped.append("{} (already exists)".format(disease))
             continue
-        
+
         # Check if this looks like a cancer
         is_cancer_related = any(kw in disease_clean for kw in CANCER_KEYWORDS)
-        
+
         if is_cancer_related:
             # Determine label based on specificity
             if any(kw in disease_clean for kw in SPECIFIC_CANCER_TYPES):
                 label = "CANCER_TYPE"
             else:
                 label = "CANCER"
-            
+
             new_rules.append(TargetRule(disease.strip(), label))
         else:
             skipped.append("{} (not cancer-related)".format(disease))
-    
+
     return new_rules, skipped
 
 
@@ -809,43 +853,43 @@ def identify_candidate_text_columns(
 ) -> List[str]:
     """
     Identify DataFrame columns that are good candidates for text analysis.
-    
+
     Args:
         df: Input DataFrame.
         config: Configuration with thresholds and exclusion patterns.
-        
+
     Returns:
         List of column names suitable for text analysis.
     """
     candidates: List[str] = []
     n_rows = len(df)
-    
+
     for col in df.columns:
         if df[col].dtype != pl.Utf8:
             continue
-        
+
         # Check exclusion patterns
         col_lower = col.lower()
         if any(p in col_lower for p in config.exclude_patterns):
             continue
-        
+
         # Check non-null percentage
         non_null_count = df[col].drop_nulls().len()
         non_null_pct = non_null_count / n_rows if n_rows > 0 else 0
-        
+
         if non_null_pct < config.min_non_null_pct:
             continue
-        
+
         # Check average length
         avg_len = df.select(
             pl.col(col).drop_nulls().str.len_chars().mean()
         ).item()
-        
+
         if avg_len is None or avg_len < config.min_avg_length:
             continue
-        
+
         candidates.append(col)
-    
+
     return candidates
 
 
@@ -856,27 +900,27 @@ def preprocess_text_columns(
 ) -> pl.DataFrame:
     """
     Normalize specified text columns and add as new columns with suffix.
-    
+
     Args:
         df: Input DataFrame.
         columns: Columns to normalize. If None, uses PRIORITY_COLS.
         suffix: Suffix for normalized column names.
-        
+
     Returns:
         DataFrame with additional normalized columns.
     """
     if columns is None:
         columns = [c for c in PRIORITY_COLS if c in df.columns]
-    
+
     normalizations = [
         normalize_text_column(pl.col(col)).alias("{}{}".format(col, suffix))
         for col in columns
         if col in df.columns
     ]
-    
+
     if normalizations:
         df = df.with_columns(normalizations)
-    
+
     return df
 
 
@@ -886,31 +930,31 @@ def get_text_column_stats(
 ) -> pl.DataFrame:
     """
     Get statistics for text columns to assess their quality.
-    
+
     Args:
         df: Input DataFrame.
         columns: Columns to analyze. If None, analyzes all Utf8 columns.
-        
+
     Returns:
         DataFrame with columns: column_name, non_null_count, non_null_pct,
         avg_length, unique_count
     """
     if columns is None:
         columns = [c for c in df.columns if df[c].dtype == pl.Utf8]
-    
+
     stats: List[Dict[str, Any]] = []
     n_rows = len(df)
-    
+
     for col in columns:
         if col not in df.columns:
             continue
-        
+
         non_null_count = df[col].drop_nulls().len()
         unique_count = df[col].n_unique()
         avg_len = df.select(
             pl.col(col).drop_nulls().str.len_chars().mean()
         ).item()
-        
+
         stats.append({
             "column_name": col,
             "non_null_count": non_null_count,
@@ -918,5 +962,5 @@ def get_text_column_stats(
             "avg_length": avg_len or 0.0,
             "unique_count": unique_count,
         })
-    
+
     return pl.DataFrame(stats)
