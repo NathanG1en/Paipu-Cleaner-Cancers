@@ -30,8 +30,8 @@ class ClassifierConfig:
     
     # Tier 1: Always process - biologically meaningful columns
     priority_cols: Tuple[str, ...] = (
-        "source_name", "tissue", "phenotype", "disease",
-        "cell_type", "tumor_type", "cancer_type"
+        "title", "source_name", "tissue", "phenotype", "disease",
+        "cell_type", "tumor_type"
     )
     
     # Tier 2: Process if present and populated - secondary metadata
@@ -69,17 +69,28 @@ class RegexPatterns:
     
     # Positive cancer indicators
     cancer_positive: str = (
-        r"(?:\bcancers?\b|\btumou?rs?\b|\bmalignan(?:t|cy)\b|\bcarcinomas?\b|"
-        r"\bneoplasms?\b|\bmetasta(?:s|t)es?\b|\badenocarcinomas?\b|\bsarcomas?\b|"
-        r"\bleukemi(?:a|as)\b|\blymphom(?:a|as)\b|\bglioblastomas?\b|\bmelanomas?\b|"
-        r"\boncolog(?:y|ic|ical)\b)"
+        r"(?:\bcancers?\b|\bcancerous\b|\btumou?rs?\b|\bmalignan(?:t|cy)\b|\bcarcinomas?\b|"
+        r"\bneoplasms?\b|\bneoplastic\b|\bneoplasia\b|"
+        r"\bmetasta(?:s|t)(?:is|es)?\b|\bmetastatic\b|"
+        r"\badenocarcinomas?\b|\bsarcomas?\b|"
+        r"\bleuk[ae]mias?\b|\blymphomas?\b|\bglioblastomas?\b|\bmelanomas?\b|"
+        r"\boncolog(?:y|ic|ical)\b|\boncogen(?:ic|e|es)\b|"
+        r"\bhemangiosarcomas?\b|\bhaemangiosarcomas?\b|"
+        r"\boligodendrogliomas?\b|\bmastocytomas?\b|\bfibrosarcomas?\b|"
+        r"\bgliomas?\b|\bpheochromocytomas?\b|\bintratumou?ral\b|\bTILs?\b|"
+        r"\bDLBCL\b|\bTNBC\b|\bHCC\b|\bNSCLC\b|\bSCLC\b|\bRCC\b|"
+        r"\bAML\b|\bCLL\b|\bMCL\b|"
+        r"\bCTVT\w*\b|\bwalker\s?256\b|"
+        r"\badcarc\w*\b|\bmetadcarc\w*\b)"
     )
     
     # Negative/control indicators
     cancer_negative: str = (
         r"(?:\bnormal\b|\bhealthy\b|\bctrl\b|\badjacent normal\b|"
         r"\bnon[-\s]?tumou?r(?:al)?\b|\bbenign\b|\bnon[-\s]?cancer(?:ous)?\b|"
-        r"\bsham\b|\bunaffected\b)"
+        r"\bsham\b|\bunaffected\b|"
+        r"\btumou?r necrosis factor\b|\btumou?r microenvironment\b|"
+        r"\bcontralateral normal\b|\bno\s+tumou?r\b)"
     )
     
     # False positive traps (species/protein names containing "onco")
@@ -116,26 +127,112 @@ class LabelMapping:
 
 CANCER_RULE_DEFINITIONS: List[Tuple[str, str, str]] = [
     # General cancer terms: (literal, category, regex_pattern)
-    ("cancer", "CANCER", r"\bcancers?\b"),
-    ("tumor", "CANCER", r"\btumou?rs?\b"),
-    ("malignant", "CANCER", r"\bmalignan(?:t|cy)\b"),
-    ("carcinoma", "CANCER", r"\bcarcinomas?\b"),
-    ("neoplasm", "CANCER", r"\bneoplasms?\b"),
-    ("metastasis", "CANCER", r"\bmetasta(?:s|t)(?:is|es)?\b"),
-    ("adenocarcinoma", "CANCER", r"\badenocarcinomas?\b"),
-    ("sarcoma", "CANCER", r"\bsarcomas?\b"),
-    ("leukemia", "CANCER", r"\bleuk[ae]mias?\b"),
-    ("lymphoma", "CANCER", r"\blymphomas?\b"),
-    ("glioblastoma", "CANCER", r"\bglioblastomas?\b"),
-    ("melanoma", "CANCER", r"\bmelanomas?\b"),
-    ("myeloma", "CANCER", r"\bmyelomas?\b"),
-    ("neuroblastoma", "CANCER", r"\bneuroblastomas?\b"),
-    ("oncogenic", "CANCER", r"\boncogen(?:ic|e|es)\b"),
-    ("adenoma", "CANCER", r"\badenomas?\b"),
-    ("osteosarcoma", "CANCER", r"\bosteosarcomas?\b"),
-    ("meningioma", "CANCER", r"\bmeningiomas?\b"),
+    ("", "CANCER", r"\bcancers?\b"),
+    ("", "CANCER", r"\btumou?rs?\b"),
+    ("", "CANCER", r"\bmalignan(?:t|cy)\b"),
+    ("", "CANCER", r"\bcarcinomas?\b"),
+    ("", "CANCER", r"\bneoplasms?\b"),
+    ("", "CANCER", r"\bmetasta(?:s|t)(?:is|es)?\b"),
+    ("", "CANCER", r"\badenocarcinomas?\b"),
+    ("", "CANCER", r"\bsarcomas?\b"),
+    ("", "CANCER", r"\bleuk[ae]mias?\b"),
+    ("", "CANCER", r"\blymphomas?\b"),
+    ("", "CANCER", r"\bglioblastomas?\b"),
+    ("", "CANCER", r"\bmelanomas?\b"),
+    ("", "CANCER", r"\bmyelomas?\b"),
+    ("", "CANCER", r"\bneuroblastomas?\b"),
+    ("", "CANCER", r"\boncogen(?:ic|e|es)\b"),
+    ("", "CANCER", r"\badenomas?\b"),
+    ("", "CANCER", r"\bosteosarcoma?\b"),
+    ("", "CANCER", r"\bmeningiomas?\b"),
+    ("", "CANCER", r"\bgliomas?\b"),
+    ("", "CANCER", r"\bpheochromocytomas?\b"),
+    ("", "CANCER", r"\bintratumou?ral\b"),
+    ("", "CANCER", r"\bTILs?\b"),
     # Specific cancer types (literal match only, no pattern)
-    ("osteosarcoma", "CANCER", ""),
+    # Just the literals
+    ("cancer", "CANCER",""),
+    ("tumor", "CANCER",""),
+    ("malignant", "CANCER",""),
+    ("carcinoma", "CANCER",""),
+    ("neoplasm", "CANCER",""),
+    ("metastasis", "CANCER",""),
+    ("adenocarcinoma", "CANCER",""),
+    ("sarcoma", "CANCER",""),
+    ("leukemia", "CANCER",""),
+    ("lymphoma", "CANCER",""),
+    ("glioblastoma", "CANCER",""),
+    ("melanoma", "CANCER",""),
+    ("myeloma", "CANCER",""),
+    ("neuroblastoma", "CANCER",""),
+    ("oncogenic", "CANCER",""),
+    ("adenoma", "CANCER",""),
+    ("osteosarcoma", "CANCER",""),
+    ("meningioma", "CANCER",""),
+    ("glioma", "CANCER", ""),
+    ("pheochromocytoma", "CANCER", ""),
+    ("intratumoral", "CANCER", ""),
+    ("TIL", "CANCER", ""),
+    ("TILs", "CANCER", ""),
+
+    # Adjective/variant forms missed by base patterns
+    ("", "CANCER", r"\bneoplastic\b"),
+    ("", "CANCER", r"\bneoplasia\b"),
+    ("", "CANCER", r"\bmetastatic\b"),
+    ("", "CANCER", r"\btumourous\b"),
+    ("neoplastic", "CANCER", ""),
+    ("neoplasia", "CANCER", ""),
+    ("metastatic", "CANCER", ""),
+
+    # Cancer abbreviations
+    ("", "CANCER", r"\bDLBCL\b"),          # Diffuse Large B-Cell Lymphoma
+    # NOTE: \bFL\b removed - matches floxed allele notation (fl/fl) too broadly
+    ("", "CANCER", r"\bTNBC\b"),           # Triple-Negative Breast Cancer
+    ("", "CANCER", r"\bHCC\b"),            # Hepatocellular Carcinoma
+    ("", "CANCER", r"\bNSCLC\b"),          # Non-Small Cell Lung Cancer
+    ("", "CANCER", r"\bSCLC\b"),           # Small Cell Lung Cancer
+    ("", "CANCER", r"\bRCC\b"),            # Renal Cell Carcinoma
+    ("", "CANCER", r"\bAML\b"),            # Acute Myeloid Leukemia
+    ("", "CANCER", r"\bCLL\b"),            # Chronic Lymphocytic Leukemia
+    ("", "CANCER", r"\bALL\b"),            # Acute Lymphoblastic Leukemia
+    ("", "CANCER", r"\bMCL\b"),            # Mantle Cell Lymphoma
+    ("DLBCL", "CANCER", ""),
+    ("TNBC", "CANCER", ""),
+    ("HCC", "CANCER", ""),
+    ("PDAC", "CANCER", ""),
+    ("", "CANCER", r"\bPDAC\b"),            # Pancreatic Ductal Adenocarcinoma
+
+    # Veterinary / comparative oncology cancer types
+    ("", "CANCER", r"\bhemangiosarcomas?\b"),
+    ("", "CANCER", r"\bhaemangiosarcomas?\b"),
+    ("", "CANCER", r"\boligodendrogliomas?\b"),
+    ("", "CANCER", r"\bmastocytomas?\b"),
+    ("", "CANCER", r"\bfibrosarcomas?\b"),
+    ("", "CANCER", r"\bchondrosarcomas?\b"),
+    ("", "CANCER", r"\bliposarcomas?\b"),
+    ("", "CANCER", r"\bleiomyosarcomas?\b"),
+    ("", "CANCER", r"\brhabdomyosarcomas?\b"),
+    ("", "CANCER", r"\bhistiocytic sarcomas?\b"),
+    ("hemangiosarcoma", "CANCER", ""),
+    ("haemangiosarcoma", "CANCER", ""),
+    ("oligodendroglioma", "CANCER", ""),
+    ("mastocytoma", "CANCER", ""),
+    ("fibrosarcoma", "CANCER", ""),
+
+    # Specific carcinoma subtypes
+    ("", "CANCER", r"\burothelial carcinomas?\b"),
+    ("", "CANCER", r"\bductal carcinomas?\b"),
+    ("", "CANCER", r"\bmammary carcinomas?\b"),
+    ("", "CANCER", r"\bprostate carcinomas?\b"),
+    ("", "CANCER", r"\btransitional cell carcinomas?\b"),
+    ("urothelial carcinoma", "CANCER", ""),
+    ("ductal carcinoma", "CANCER", ""),
+    ("mammary ductal carcinoma", "CANCER", ""),
+    ("mammary carcinoma", "CANCER", ""),
+    ("prostate carcinoma", "CANCER", ""),
+    ("transitional cell carcinoma", "CANCER", ""),
+
+    # Multi-word cancer descriptions
     ("hepatocellular carcinoma", "CANCER", ""),
     ("breast cancer", "CANCER", ""),
     ("lung cancer", "CANCER", ""),
@@ -156,6 +253,26 @@ CANCER_RULE_DEFINITIONS: List[Tuple[str, str, str]] = [
     ("triple negative breast cancer", "CANCER", ""),
     ("HER2 positive", "CANCER", ""),
     ("ER positive", "CANCER", ""),
+    ("cutaneous melanoma", "CANCER", ""),
+    ("oral melanoma", "CANCER", ""),
+    ("soft tissue sarcoma", "CANCER", ""),
+    ("mammary tumor", "CANCER", ""),
+    ("mammary tumour", "CANCER", ""),
+    ("b-cell lymphoma", "CANCER", ""),
+    ("b cell lymphoma", "CANCER", ""),
+    ("t-cell lymphoma", "CANCER", ""),
+    ("t cell lymphoma", "CANCER", ""),
+
+    # Additional patterns for non-mouse datasets
+    ("", "CANCER", r"\bcancerous\b"),
+    ("", "CANCER", r"\bCTVT\w*\b"),              # Canine Transmissible Venereal Tumor
+    ("CTVT", "CANCER", ""),
+    ("", "CANCER", r"\bwalker\s?256\b"),       # Walker 256 carcinosarcoma cell line
+    ("Walker 256", "CANCER", ""),
+    ("Walker256", "CANCER", ""),
+    ("", "CANCER", r"\badcarc\w*\b"),             # Abbreviated adenocarcinoma
+    ("", "CANCER", r"\bmetadcarc\w*\b"),          # Abbreviated metastatic adenocarcinoma
+    ("cancerous", "CANCER", ""),
 ]
 
 NON_CANCER_RULE_DEFINITIONS: List[Tuple[str, str, str]] = [
@@ -174,6 +291,10 @@ NON_CANCER_RULE_DEFINITIONS: List[Tuple[str, str, str]] = [
     ("adjacent normal", "NON_CANCER", ""),
     ("tumor-adjacent normal", "NON_CANCER", ""),
     ("matched normal", "NON_CANCER", ""),
+    ("contralateral normal", "NON_CANCER", ""),
+    # Non-cancer traps: terms with 'tumor' that don't indicate cancer
+    ("tumor necrosis factor", "NON_CANCER", r"\btumou?r necrosis factor\b"),
+    ("tumor microenvironment", "NON_CANCER", r"\btumou?r microenvironment\b"),
     # Onco-traps (false positives - species/proteins)
     ("oncorhynchus", "NON_CANCER", r"\boncorhynchus\b"),
     ("oncophora", "NON_CANCER", r"\boncophora\b"),
@@ -214,12 +335,19 @@ FINAL_LABEL_MAP: Dict[str, str] = DEFAULT_LABEL_MAP.final_label_map
 CANCER_KEYWORDS: FrozenSet[str] = frozenset({
     "cancer", "tumor", "tumour", "carcinoma", "sarcoma", "lymphoma",
     "leukemia", "leukaemia", "melanoma", "glioma", "blastoma", "myeloma",
-    "neoplasm", "malignant", "metastatic", "adenoma", "oncology"
+    "neoplasm", "neoplastic", "neoplasia", "malignant", "metastatic",
+    "adenoma", "oncology", "hemangiosarcoma", "haemangiosarcoma",
+    "oligodendroglioma", "mastocytoma", "fibrosarcoma",
+    "chondrosarcoma", "liposarcoma", "leiomyosarcoma",
+    "rhabdomyosarcoma", "glioma", "pheochromocytoma", "intratumoral",
 })
 
 SPECIFIC_CANCER_TYPES: FrozenSet[str] = frozenset({
     "carcinoma", "sarcoma", "lymphoma", "leukemia", "leukaemia",
-    "melanoma", "glioma", "blastoma", "myeloma"
+    "melanoma", "glioma", "blastoma", "myeloma",
+    "hemangiosarcoma", "haemangiosarcoma", "oligodendroglioma",
+    "mastocytoma", "fibrosarcoma", "chondrosarcoma",
+    "liposarcoma", "leiomyosarcoma", "rhabdomyosarcoma",
 })
 
 # =============================================================================

@@ -178,9 +178,11 @@ def classify_cancer_samples(
     
     # Combine results
     df = df.with_columns(
-        pl.struct(["regex_label", "med_label"])
+        pl.struct(["regex_label", "med_label", "med_source_columns"])
         .map_elements(
-            lambda x: resolve_uncertain(x["regex_label"], x["med_label"]),
+            lambda x: resolve_uncertain(
+                x["regex_label"], x["med_label"], x.get("med_source_columns", "")
+            ),
             return_dtype=pl.Utf8,
         )
         .alias("confidence_category")
@@ -254,10 +256,52 @@ def _apply_regex_classification(
         if negative_cols else pl.lit(0).alias("n_negative_mentions"),
     ])
     
+    # Track sample-level vs study-level signals separately
+    # source_name and tissue describe the *individual sample*
+    # title and cell_type often describe the *study/experiment*
+    sample_level_cols = ["source_name", "tissue"]
+    
+    sample_neg_cols = [
+        "negative_in_{}".format(c) for c in sample_level_cols
+        if "negative_in_{}".format(c) in df.columns
+    ]
+    sample_cancer_cols = [
+        "cancer_in_{}".format(c) for c in sample_level_cols
+        if "cancer_in_{}".format(c) in df.columns
+    ]
+    
+    df = df.with_columns([
+        (pl.sum_horizontal([pl.col(c) for c in sample_neg_cols]).alias("n_sample_negative")
+         if sample_neg_cols else pl.lit(0).alias("n_sample_negative")),
+        (pl.sum_horizontal([pl.col(c) for c in sample_cancer_cols]).alias("n_sample_cancer")
+         if sample_cancer_cols else pl.lit(0).alias("n_sample_cancer")),
+    ])
+    
+    # Also check if the title contains ctrl/control (common in GEO titles for controls)
+    df = df.with_columns(
+        normalize_text_column(pl.col(sample_name_col))
+        .str.contains(r"(?:\bctrl\b|\bcontrol\b)")
+        .alias("ctrl_in_title")
+    )
+    
     # Determine regex label
     df = df.with_columns([
         pl.when(pl.col("onco_trap_in_sample_name"))
         .then(pl.lit("uncertain_onco_trap"))
+        # NEW: If sample-level columns say non-cancer, trust them even if cancer
+        # terms appear in study-level columns (title, cell_type)
+        .when(
+            (pl.col("n_sample_negative") >= 1) &
+            (pl.col("n_sample_cancer") == 0)
+        )
+        .then(pl.lit("likely_non_cancer"))
+        # If title has ctrl/control AND no sample-level cancer, downgrade
+        .when(
+            pl.col("ctrl_in_title") &
+            (pl.col("n_sample_cancer") == 0) &
+            (pl.col("n_cancer_mentions") >= 1)
+        )
+        .then(pl.lit("likely_non_cancer"))
         .when(
             pl.col("cancer_in_sample_name") &
             (pl.col("n_cancer_mentions") >= 1) &
@@ -347,7 +391,7 @@ def medspacy_classify(
             "label": ent.label_,
             "is_negated": getattr(ent._, "is_negated", False),
             "is_hypothetical": getattr(ent._, "is_hypothetical", False),
-            "is_historical": getattr(ent._, "is_family", False),
+            "is_family": getattr(ent._, "is_family", False),
         }
         entities.append(ent_info)
 
@@ -546,33 +590,47 @@ def _classify_doc(doc: "Doc") -> Dict[str, str]:
 def resolve_uncertain(
     regex_label: Optional[str],
     med_label: Optional[str],
+    med_source_columns: Optional[str] = None,
 ) -> str:
     """
     Resolve final classification by combining regex and MedSpaCy results.
 
-    Priority logic:
-    1. Confident regex labels take precedence
-    2. MedSpaCy can upgrade uncertain cases
-    3. Fallback to regex label
+    Every sample gets a definitive cancer or non-cancer classification.
+    Uses med_source_columns to determine if cancer was found in
+    sample-level columns (source_name, tissue) vs study-level (title, cell_type).
 
     Args:
         regex_label: Classification from regex stage.
         med_label: Classification from MedSpaCy stage.
+        med_source_columns: Comma-separated column names where MedSpaCy found cancer.
 
     Returns:
-        Final confidence category string.
+        Final confidence category string (never "uncertain").
     """
     regex_label = regex_label or "uncertain_no_signal"
     med_label = med_label or "NO_SIGNAL"
+    med_source_columns = med_source_columns or ""
+
+    # Check if MedSpaCy found cancer in sample-level columns
+    # title is study-level; all other columns describe the sample
+    study_level_only = {"title"}
+    source_cols_set = {c.strip() for c in med_source_columns.split(",") if c.strip()}
+    # Cancer signal is reliable if found in ANY column other than just title
+    cancer_in_sample_cols = bool(source_cols_set - study_level_only)
 
     # High confidence regex results
     if regex_label == "confident_cancer":
         return "confident_cancer"
 
     if regex_label == "likely_non_cancer":
-        # Check if MedSpaCy found cancer
-        if med_label == "CANCER":
+        # Regex found negative context (normal, control, etc.)
+        # Trust MedSpaCy ONLY if cancer was found in sample-level columns
+        if med_label == "CANCER" and cancer_in_sample_cols:
             return "confirmed_by_medspacy"
+        # Cancer found only in title/study-level cols — still trust MedSpaCy
+        # over regex when cancer is the dominant NLP signal
+        if med_label == "CANCER":
+            return "likely_cancer"
         return "confirmed_non_cancer"
 
     # Likely cancer - verify with MedSpaCy
@@ -588,8 +646,9 @@ def resolve_uncertain(
         if med_label == "CANCER":
             return "confirmed_by_medspacy"
         elif med_label == "NON_CANCER":
-            return "likely_non_cancer"
-        return regex_label  # Keep uncertain
+            return "confirmed_non_cancer"
+        # No signal at all - default to non-cancer
+        return "confirmed_non_cancer"
 
     return regex_label
 
