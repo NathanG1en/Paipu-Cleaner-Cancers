@@ -6,19 +6,40 @@ a dataclass-based configuration system for the classification pipeline.
 """
 
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Dict, FrozenSet, List, Tuple
 import medspacy
 from medspacy.context import ConTextRule
 
 
+class ClassificationLabel(str, Enum):
+    """Final classification labels used throughout the pipeline."""
+
+    CONFIDENT_CANCER = "confident_cancer"
+    LIKELY_CANCER = "likely_cancer"
+    CONFIRMED_BY_MEDSPACY = "confirmed_by_medspacy"
+    CONFIRMED_NON_CANCER = "confirmed_non_cancer"
+    LIKELY_NON_CANCER = "likely_non_cancer"
+    UNCERTAIN_NO_SIGNAL = "uncertain_no_signal"
+    UNCERTAIN_WEAK_SIGNAL = "uncertain_weak_signal"
+    UNCERTAIN_ONCO_TRAP = "uncertain_onco_trap"
+
+
+class MedSpaCyLabel(str, Enum):
+    """Labels returned by MedSpaCy classification."""
+
+    CANCER = "CANCER"
+    NON_CANCER = "NON_CANCER"
+    NO_SIGNAL = "NO_SIGNAL"
+
 @dataclass(frozen=True)
 class ClassifierConfig:
     """
     Immutable configuration for the cancer classification pipeline.
-    
+
     This is the single source of truth for column configuration,
     used by both text preprocessing and classification functions.
-    
+
     Attributes:
         priority_cols: Primary columns to search for cancer indicators.
         secondary_cols: Additional columns to check if present.
@@ -27,29 +48,50 @@ class ClassifierConfig:
         min_non_null_pct: Minimum non-null percentage for viable text columns.
         batch_size: Default batch size for MedSpaCy processing.
     """
-    
+
     # Tier 1: Always process - biologically meaningful columns
     priority_cols: Tuple[str, ...] = (
-        "title", "source_name", "tissue", "phenotype", "disease",
-        "cell_type", "tumor_type"
+        "title",
+        "source_name",
+        "tissue",
+        "phenotype",
+        "disease",
+        "cell_type",
+        "tumor_type",
     )
-    
+
     # Tier 2: Process if present and populated - secondary metadata
     secondary_cols: Tuple[str, ...] = (
-        "sample_name", "condition", "health_state", "tissue_type",
-        "celltype", "model", "cell_types", "tissue_cell_type"
+        "sample_name",
+        "condition",
+        "health_state",
+        "tissue_type",
+        "celltype",
+        "model",
+        "cell_types",
+        "tissue_cell_type",
     )
-    
+
     # Columns to never process (IDs, hashes, etc.)
     exclude_patterns: Tuple[str, ...] = (
-        "_id", "accession", "uuid", "hash", "checksum", "md5", "sha",
-        "url", "path", "file", "date", "time"
+        "_id",
+        "accession",
+        "uuid",
+        "hash",
+        "checksum",
+        "md5",
+        "sha",
+        "url",
+        "path",
+        "file",
+        "date",
+        "time",
     )
-    
+
     # Thresholds for auto-discovery of additional columns
     min_avg_length: float = 10.0
     min_non_null_pct: float = 0.01
-    
+
     # Processing settings
     batch_size: int = 64
 
@@ -62,11 +104,11 @@ TextColumnConfig = ClassifierConfig
 class RegexPatterns:
     """
     Regex patterns for cancer detection.
-    
+
     These patterns are used for the initial regex-based classification
     stage before MedSpaCy NLP processing.
     """
-    
+
     # Positive cancer indicators
     cancer_positive: str = (
         r"(?:\bcancers?\b|\bcancerous\b|\btumou?rs?\b|\bmalignan(?:t|cy)\b|\bcarcinomas?\b|"
@@ -83,7 +125,7 @@ class RegexPatterns:
         r"\bCTVT\w*\b|\bwalker\s?256\b|"
         r"\badcarc\w*\b|\bmetadcarc\w*\b)"
     )
-    
+
     # Negative/control indicators
     cancer_negative: str = (
         r"(?:\bnormal\b|\bhealthy\b|\bctrl\b|\badjacent normal\b|"
@@ -92,11 +134,9 @@ class RegexPatterns:
         r"\btumou?r necrosis factor\b|\btumou?r microenvironment\b|"
         r"\bcontralateral normal\b|\bno\s+tumou?r\b)"
     )
-    
+
     # False positive traps (species/protein names containing "onco")
-    onco_traps: str = (
-        r"(?:\boncophora\b|\boncorhynchus\b|\boncotic\b|\boncomodulin\b)"
-    )
+    onco_traps: str = r"(?:\boncophora\b|\boncorhynchus\b|\boncotic\b|\boncomodulin\b)"
 
 
 @dataclass(frozen=True)
@@ -104,18 +144,20 @@ class LabelMapping:
     """
     Label mappings for final classification output.
     """
-    
+
     # Map confidence categories to final labels
-    final_label_map: Dict[str, str] = field(default_factory=lambda: {
-        "confident_cancer": "CANCER",
-        "likely_cancer": "CANCER",
-        "confirmed_by_medspacy": "CANCER",
-        "confirmed_non_cancer": "NON_CANCER",
-        "likely_non_cancer": "NON_CANCER",
-        "uncertain_no_signal": "UNCERTAIN",
-        "uncertain_weak_signal": "UNCERTAIN",
-        "uncertain_medspacy": "UNCERTAIN",
-    })
+    final_label_map: Dict[str, str] = field(
+        default_factory=lambda: {
+            "confident_cancer": "CANCER",
+            "likely_cancer": "CANCER",
+            "confirmed_by_medspacy": "CANCER",
+            "confirmed_non_cancer": "NON_CANCER",
+            "likely_non_cancer": "NON_CANCER",
+            "uncertain_no_signal": "UNCERTAIN",
+            "uncertain_weak_signal": "UNCERTAIN",
+            "uncertain_medspacy": "UNCERTAIN",
+        }
+    )
 
 
 # =============================================================================
@@ -151,30 +193,29 @@ CANCER_RULE_DEFINITIONS: List[Tuple[str, str, str]] = [
     ("", "CANCER", r"\bTILs?\b"),
     # Specific cancer types (literal match only, no pattern)
     # Just the literals
-    ("cancer", "CANCER",""),
-    ("tumor", "CANCER",""),
-    ("malignant", "CANCER",""),
-    ("carcinoma", "CANCER",""),
-    ("neoplasm", "CANCER",""),
-    ("metastasis", "CANCER",""),
-    ("adenocarcinoma", "CANCER",""),
-    ("sarcoma", "CANCER",""),
-    ("leukemia", "CANCER",""),
-    ("lymphoma", "CANCER",""),
-    ("glioblastoma", "CANCER",""),
-    ("melanoma", "CANCER",""),
-    ("myeloma", "CANCER",""),
-    ("neuroblastoma", "CANCER",""),
-    ("oncogenic", "CANCER",""),
-    ("adenoma", "CANCER",""),
-    ("osteosarcoma", "CANCER",""),
-    ("meningioma", "CANCER",""),
+    ("cancer", "CANCER", ""),
+    ("tumor", "CANCER", ""),
+    ("malignant", "CANCER", ""),
+    ("carcinoma", "CANCER", ""),
+    ("neoplasm", "CANCER", ""),
+    ("metastasis", "CANCER", ""),
+    ("adenocarcinoma", "CANCER", ""),
+    ("sarcoma", "CANCER", ""),
+    ("leukemia", "CANCER", ""),
+    ("lymphoma", "CANCER", ""),
+    ("glioblastoma", "CANCER", ""),
+    ("melanoma", "CANCER", ""),
+    ("myeloma", "CANCER", ""),
+    ("neuroblastoma", "CANCER", ""),
+    ("oncogenic", "CANCER", ""),
+    ("adenoma", "CANCER", ""),
+    ("osteosarcoma", "CANCER", ""),
+    ("meningioma", "CANCER", ""),
     ("glioma", "CANCER", ""),
     ("pheochromocytoma", "CANCER", ""),
     ("intratumoral", "CANCER", ""),
     ("TIL", "CANCER", ""),
     ("TILs", "CANCER", ""),
-
     # Adjective/variant forms missed by base patterns
     ("", "CANCER", r"\bneoplastic\b"),
     ("", "CANCER", r"\bneoplasia\b"),
@@ -183,25 +224,23 @@ CANCER_RULE_DEFINITIONS: List[Tuple[str, str, str]] = [
     ("neoplastic", "CANCER", ""),
     ("neoplasia", "CANCER", ""),
     ("metastatic", "CANCER", ""),
-
     # Cancer abbreviations
-    ("", "CANCER", r"\bDLBCL\b"),          # Diffuse Large B-Cell Lymphoma
+    ("", "CANCER", r"\bDLBCL\b"),  # Diffuse Large B-Cell Lymphoma
     # NOTE: \bFL\b removed - matches floxed allele notation (fl/fl) too broadly
-    ("", "CANCER", r"\bTNBC\b"),           # Triple-Negative Breast Cancer
-    ("", "CANCER", r"\bHCC\b"),            # Hepatocellular Carcinoma
-    ("", "CANCER", r"\bNSCLC\b"),          # Non-Small Cell Lung Cancer
-    ("", "CANCER", r"\bSCLC\b"),           # Small Cell Lung Cancer
-    ("", "CANCER", r"\bRCC\b"),            # Renal Cell Carcinoma
-    ("", "CANCER", r"\bAML\b"),            # Acute Myeloid Leukemia
-    ("", "CANCER", r"\bCLL\b"),            # Chronic Lymphocytic Leukemia
-    ("", "CANCER", r"\bALL\b"),            # Acute Lymphoblastic Leukemia
-    ("", "CANCER", r"\bMCL\b"),            # Mantle Cell Lymphoma
+    ("", "CANCER", r"\bTNBC\b"),  # Triple-Negative Breast Cancer
+    ("", "CANCER", r"\bHCC\b"),  # Hepatocellular Carcinoma
+    ("", "CANCER", r"\bNSCLC\b"),  # Non-Small Cell Lung Cancer
+    ("", "CANCER", r"\bSCLC\b"),  # Small Cell Lung Cancer
+    ("", "CANCER", r"\bRCC\b"),  # Renal Cell Carcinoma
+    ("", "CANCER", r"\bAML\b"),  # Acute Myeloid Leukemia
+    ("", "CANCER", r"\bCLL\b"),  # Chronic Lymphocytic Leukemia
+    ("", "CANCER", r"\bALL\b"),  # Acute Lymphoblastic Leukemia
+    ("", "CANCER", r"\bMCL\b"),  # Mantle Cell Lymphoma
     ("DLBCL", "CANCER", ""),
     ("TNBC", "CANCER", ""),
     ("HCC", "CANCER", ""),
     ("PDAC", "CANCER", ""),
-    ("", "CANCER", r"\bPDAC\b"),            # Pancreatic Ductal Adenocarcinoma
-
+    ("", "CANCER", r"\bPDAC\b"),  # Pancreatic Ductal Adenocarcinoma
     # Veterinary / comparative oncology cancer types
     ("", "CANCER", r"\bhemangiosarcomas?\b"),
     ("", "CANCER", r"\bhaemangiosarcomas?\b"),
@@ -218,7 +257,6 @@ CANCER_RULE_DEFINITIONS: List[Tuple[str, str, str]] = [
     ("oligodendroglioma", "CANCER", ""),
     ("mastocytoma", "CANCER", ""),
     ("fibrosarcoma", "CANCER", ""),
-
     # Specific carcinoma subtypes
     ("", "CANCER", r"\burothelial carcinomas?\b"),
     ("", "CANCER", r"\bductal carcinomas?\b"),
@@ -231,7 +269,6 @@ CANCER_RULE_DEFINITIONS: List[Tuple[str, str, str]] = [
     ("mammary carcinoma", "CANCER", ""),
     ("prostate carcinoma", "CANCER", ""),
     ("transitional cell carcinoma", "CANCER", ""),
-
     # Multi-word cancer descriptions
     ("hepatocellular carcinoma", "CANCER", ""),
     ("breast cancer", "CANCER", ""),
@@ -262,16 +299,15 @@ CANCER_RULE_DEFINITIONS: List[Tuple[str, str, str]] = [
     ("b cell lymphoma", "CANCER", ""),
     ("t-cell lymphoma", "CANCER", ""),
     ("t cell lymphoma", "CANCER", ""),
-
     # Additional patterns for non-mouse datasets
     ("", "CANCER", r"\bcancerous\b"),
-    ("", "CANCER", r"\bCTVT\w*\b"),              # Canine Transmissible Venereal Tumor
+    ("", "CANCER", r"\bCTVT\w*\b"),  # Canine Transmissible Venereal Tumor
     ("CTVT", "CANCER", ""),
-    ("", "CANCER", r"\bwalker\s?256\b"),       # Walker 256 carcinosarcoma cell line
+    ("", "CANCER", r"\bwalker\s?256\b"),  # Walker 256 carcinosarcoma cell line
     ("Walker 256", "CANCER", ""),
     ("Walker256", "CANCER", ""),
-    ("", "CANCER", r"\badcarc\w*\b"),             # Abbreviated adenocarcinoma
-    ("", "CANCER", r"\bmetadcarc\w*\b"),          # Abbreviated metastatic adenocarcinoma
+    ("", "CANCER", r"\badcarc\w*\b"),  # Abbreviated adenocarcinoma
+    ("", "CANCER", r"\bmetadcarc\w*\b"),  # Abbreviated metastatic adenocarcinoma
     ("cancerous", "CANCER", ""),
 ]
 
@@ -332,23 +368,64 @@ FINAL_LABEL_MAP: Dict[str, str] = DEFAULT_LABEL_MAP.final_label_map
 # Cancer detection keywords (used for rule generation)
 # =============================================================================
 
-CANCER_KEYWORDS: FrozenSet[str] = frozenset({
-    "cancer", "tumor", "tumour", "carcinoma", "sarcoma", "lymphoma",
-    "leukemia", "leukaemia", "melanoma", "glioma", "blastoma", "myeloma",
-    "neoplasm", "neoplastic", "neoplasia", "malignant", "metastatic",
-    "adenoma", "oncology", "hemangiosarcoma", "haemangiosarcoma",
-    "oligodendroglioma", "mastocytoma", "fibrosarcoma",
-    "chondrosarcoma", "liposarcoma", "leiomyosarcoma",
-    "rhabdomyosarcoma", "glioma", "pheochromocytoma", "intratumoral",
-})
+CANCER_KEYWORDS: FrozenSet[str] = frozenset(
+    {
+        "cancer",
+        "tumor",
+        "tumour",
+        "carcinoma",
+        "sarcoma",
+        "lymphoma",
+        "leukemia",
+        "leukaemia",
+        "melanoma",
+        "glioma",
+        "blastoma",
+        "myeloma",
+        "neoplasm",
+        "neoplastic",
+        "neoplasia",
+        "malignant",
+        "metastatic",
+        "adenoma",
+        "oncology",
+        "hemangiosarcoma",
+        "haemangiosarcoma",
+        "oligodendroglioma",
+        "mastocytoma",
+        "fibrosarcoma",
+        "chondrosarcoma",
+        "liposarcoma",
+        "leiomyosarcoma",
+        "rhabdomyosarcoma",
+        "glioma",
+        "pheochromocytoma",
+        "intratumoral",
+    }
+)
 
-SPECIFIC_CANCER_TYPES: FrozenSet[str] = frozenset({
-    "carcinoma", "sarcoma", "lymphoma", "leukemia", "leukaemia",
-    "melanoma", "glioma", "blastoma", "myeloma",
-    "hemangiosarcoma", "haemangiosarcoma", "oligodendroglioma",
-    "mastocytoma", "fibrosarcoma", "chondrosarcoma",
-    "liposarcoma", "leiomyosarcoma", "rhabdomyosarcoma",
-})
+SPECIFIC_CANCER_TYPES: FrozenSet[str] = frozenset(
+    {
+        "carcinoma",
+        "sarcoma",
+        "lymphoma",
+        "leukemia",
+        "leukaemia",
+        "melanoma",
+        "glioma",
+        "blastoma",
+        "myeloma",
+        "hemangiosarcoma",
+        "haemangiosarcoma",
+        "oligodendroglioma",
+        "mastocytoma",
+        "fibrosarcoma",
+        "chondrosarcoma",
+        "liposarcoma",
+        "leiomyosarcoma",
+        "rhabdomyosarcoma",
+    }
+)
 
 # =============================================================================
 # MedSpaCy Context Rule Definitions (negation detection)
@@ -361,8 +438,7 @@ CONTEXT_RULE_DEFINITIONS: List[Tuple[str, str, str]] = [
     # Prefix-based negations: (literal, category, direction)
     ("non-", "NEGATED_EXISTENCE", "FORWARD"),
     ("non -", "NEGATED_EXISTENCE", "FORWARD"),  # Handles tokenization of "non-X"
-    ("non", "NEGATED_EXISTENCE", "FORWARD"),    # Handles "non X" with space
-    
+    ("non", "NEGATED_EXISTENCE", "FORWARD"),  # Handles "non X" with space
     # Additional negation patterns
     ("no", "NEGATED_EXISTENCE", "FORWARD"),
     ("without", "NEGATED_EXISTENCE", "FORWARD"),
