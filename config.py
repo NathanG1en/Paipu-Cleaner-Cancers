@@ -135,7 +135,8 @@ class RegexPatterns:
         r"\bnon[-\s]?tumou?r(?:al)?\b|\bbenign\b|\bnon[-\s]?cancer(?:ous)?\b|"
         r"\bsham\b|\bunaffected\b|"
         r"\btumou?r necrosis factor\b|\btumou?r microenvironment\b|"
-        r"\bcontralateral normal\b|\bno\s+tumou?r\b)"
+        r"\bcontralateral normal\b|\bno\s+tumou?r\b|"
+        r"\bnon[-\s]?melanoma\b|\bnon[-\s]?malignant\b)"
     )
 
     # False positive traps (species/protein names containing "onco")
@@ -324,8 +325,6 @@ NON_CANCER_RULE_DEFINITIONS: List[Tuple[str, str, str]] = [
     ("non-cancer", "NON_CANCER", r"\bnon[-\s]?cancer(?:ous)?\b"),
     ("sham", "NON_CANCER", r"\bsham\b"),
     ("unaffected", "NON_CANCER", r"\bunaffected\b"),
-    ("wild type", "NON_CANCER", r"\bwild[-\s]?type\b"),
-    ("WT", "NON_CANCER", r"\bWT\b"),
     # Literal match only
     ("adjacent normal", "NON_CANCER", ""),
     ("tumor-adjacent normal", "NON_CANCER", ""),
@@ -338,6 +337,9 @@ NON_CANCER_RULE_DEFINITIONS: List[Tuple[str, str, str]] = [
     ("oncorhynchus", "NON_CANCER", r"\boncorhynchus\b"),
     ("oncophora", "NON_CANCER", r"\boncophora\b"),
     ("oncotic", "NON_CANCER", r"\boncotic\b"),
+    # Broader "non {cancer_type}" patterns
+    ("non-melanoma", "NON_CANCER", r"\bnon[-\s]?melanoma\b"),
+    ("non-malignant", "NON_CANCER", r"\bnon[-\s]?malignant\b"),
     ("oncomodulin", "NON_CANCER", r"\boncomodulin\b"),
 ]
 

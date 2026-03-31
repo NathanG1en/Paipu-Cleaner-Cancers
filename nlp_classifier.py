@@ -123,7 +123,8 @@ def medspacy_classify_batch(
     source_cols: List[str] = []
 
     for row in rows_as_dicts:
-        found_in_cols = []
+        found_in_cols = []      # All entity matches (for human-readable reason)
+        cancer_in_cols = []     # Only CANCER entity matches (for resolve logic)
 
         suffix = "_norm" if use_normalized else ""
         for col in priority_cols:
@@ -133,8 +134,12 @@ def medspacy_classify_batch(
             if isinstance(text, str) and text.strip() and _has_alphabetic(text):
                 doc = nlp_pipeline(text.strip().lower())
                 for ent in doc.ents:
-                    if ent.label_ in (ML.CANCER.value, ML.NON_CANCER.value) and not getattr(ent._, "is_negated", False):
-                        found_in_cols.append(f"{col}:{ent.text}")
+                    if not getattr(ent._, "is_negated", False):
+                        if ent.label_ == ML.CANCER.value:
+                            found_in_cols.append(f"{col}:{ent.text}")
+                            cancer_in_cols.append(f"{col}:{ent.text}")
+                        elif ent.label_ == ML.NON_CANCER.value:
+                            found_in_cols.append(f"{col}:{ent.text}")
 
         # Process combined text for overall classification
         combined_text = clean_texts(row, tuple(priority_cols), use_normalized)
@@ -146,7 +151,8 @@ def medspacy_classify_batch(
         if found_in_cols:
             col_info = " | found_in: " + ", ".join(set(found_in_cols[:5]))
             reasons.append(result["reason"] + col_info)
-            source_cols.append(", ".join(set([c.split(":")[0] for c in found_in_cols])))
+            # med_source_columns only tracks where CANCER entities were found
+            source_cols.append(", ".join(set([c.split(":")[0] for c in cancer_in_cols])))
         else:
             reasons.append(result["reason"])
             source_cols.append("")
@@ -181,7 +187,10 @@ def resolve_uncertain(
     med_source_columns = med_source_columns or ""
 
     # Check if MedSpaCy found cancer in sample-level columns
-    study_level_only = {"title"}
+    # diagnosis = patient condition, cell_type = cell line origin, title = study name
+    # None of these describe the sample itself, so cancer found only there
+    # should not override sample-level non-cancer evidence.
+    study_level_only = {"title", "diagnosis", "cell_type"}
     source_cols_set = {c.strip() for c in med_source_columns.split(",") if c.strip()}
     cancer_in_sample_cols = bool(source_cols_set - study_level_only)
 
@@ -192,8 +201,7 @@ def resolve_uncertain(
     if regex_label == CL.LIKELY_NON_CANCER.value:
         if med_label == ML.CANCER.value and cancer_in_sample_cols:
             return CL.CONFIRMED_BY_MEDSPACY.value
-        if med_label == ML.CANCER.value:
-            return CL.LIKELY_CANCER.value
+        # Cancer only in study-level cols: sample-level evidence prevails
         return CL.CONFIRMED_NON_CANCER.value
 
     # Likely cancer - verify with MedSpaCy

@@ -103,16 +103,42 @@ def apply_regex_classification(
          if sample_cancer_cols else pl.lit(0).alias("n_sample_cancer")),
     ])
 
-    # Check for ctrl/control in title
+    # Check for ctrl/control/normal in title
     df = df.with_columns(
         normalize_text_column(pl.col(sample_name_col))
-        .str.contains(r"(?:\bctrl\b|\bcontrol\b)")
+        .str.contains(r"(?:\bctrl\b|\bcontrol\b|\bnormal\b)")
         .alias("ctrl_in_title")
     )
 
+    # Check for control/normal in sample-level columns (source_name, tissue)
+    sample_ctrl_cols = []
+    for col in ["source_name", "tissue"]:
+        col_ref = get_col(col)
+        if col_ref in df.columns:
+            df = df.with_columns(
+                normalize_text_column(pl.col(col_ref))
+                .str.contains(r"(?:\bctrl\b|\bcontrol\b|\bnormal\b)")
+                .alias(f"ctrl_in_{col}")
+            )
+            sample_ctrl_cols.append(f"ctrl_in_{col}")
+
+    if sample_ctrl_cols:
+        df = df.with_columns(
+            pl.any_horizontal([pl.col(c) for c in sample_ctrl_cols])
+            .alias("ctrl_in_sample_cols")
+        )
+    else:
+        df = df.with_columns(pl.lit(False).alias("ctrl_in_sample_cols"))
+
     # Determine regex label
     df = df.with_columns([
-        pl.when(pl.col("onco_trap_in_sample_name"))
+        # Sample-level columns say normal/control with no sample-level cancer
+        pl.when(
+            pl.col("ctrl_in_sample_cols") &
+            (pl.col("n_sample_cancer") == 0)
+        )
+        .then(pl.lit(CL.LIKELY_NON_CANCER.value))
+        .when(pl.col("onco_trap_in_sample_name"))
         .then(pl.lit(CL.UNCERTAIN_ONCO_TRAP.value))
         .when(
             (pl.col("n_sample_negative") >= 1) &
@@ -175,7 +201,8 @@ def apply_regex_classification(
     temp_cols = (
         ["cancer_in_sample_name", "negative_in_sample_name", "onco_trap_in_sample_name",
          "n_cancer_mentions", "n_negative_mentions", "n_sample_negative",
-         "n_sample_cancer", "ctrl_in_title"]
+         "n_sample_cancer", "ctrl_in_title", "ctrl_in_sample_cols"]
+        + [f"ctrl_in_{c}" for c in ["source_name", "tissue"]]
         + cancer_cols
         + negative_cols
     )
