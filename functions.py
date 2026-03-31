@@ -104,10 +104,13 @@ def classify_cancer_samples(
     use_normalized: bool = True,
     priority_cols: Tuple[str, ...] = PRIORITY_COLS,
     fallback_providers: Optional[List] = None,
+    use_regex: bool = True,
+    use_medspacy: bool = True,
+    use_fallback: bool = True,
 ) -> pl.DataFrame:
     """
     Classify samples as cancer/non-cancer using regex, MedSpaCy, and
-    optional fallback providers.
+    optional fallback providers. Each stage can be toggled on/off.
 
     Stages:
     1. Regex-based pattern matching for quick filtering
@@ -123,6 +126,9 @@ def classify_cancer_samples(
         priority_cols: Columns to search for cancer indicators.
         fallback_providers: Optional list of FallbackProvider instances.
             Each is tried in order for unresolved samples.
+        use_regex: Enable/disable the regex classification stage.
+        use_medspacy: Enable/disable the MedSpaCy NLP stage.
+        use_fallback: Enable/disable the fallback provider stage.
 
     Returns:
         DataFrame with added columns: regex_label, regex_reason,
@@ -131,19 +137,32 @@ def classify_cancer_samples(
     available_cols = [c for c in priority_cols if c in df.columns]
 
     # Stage 1: Regex classification
-    df = apply_regex_classification(df, available_cols, use_normalized)
+    if use_regex:
+        df = apply_regex_classification(df, available_cols, use_normalized)
+    else:
+        df = df.with_columns([
+            pl.lit(CL.UNCERTAIN_NO_SIGNAL.value).alias("regex_label"),
+            pl.lit("skipped").alias("regex_reason"),
+        ])
 
     # Stage 2: MedSpaCy classification
-    if nlp_pipeline is None:
-        nlp_pipeline = get_nlp()
+    if use_medspacy:
+        if nlp_pipeline is None:
+            nlp_pipeline = get_nlp()
 
-    df = medspacy_classify_batch(
-        df,
-        nlp_pipeline=nlp_pipeline,
-        batch_size=batch_size,
-        priority_cols=available_cols,
-        use_normalized=use_normalized,
-    )
+        df = medspacy_classify_batch(
+            df,
+            nlp_pipeline=nlp_pipeline,
+            batch_size=batch_size,
+            priority_cols=available_cols,
+            use_normalized=use_normalized,
+        )
+    else:
+        df = df.with_columns([
+            pl.lit(ML.NO_SIGNAL.value).alias("med_label"),
+            pl.lit("skipped").alias("med_reason"),
+            pl.lit("").alias("med_source_columns"),
+        ])
 
     # Combine regex + MedSpaCy results
     df = df.with_columns(
@@ -170,7 +189,7 @@ def classify_cancer_samples(
     )
 
     # Stage 3: Fallback pipeline for no-signal samples
-    if fallback_providers:
+    if use_fallback and fallback_providers:
         from fallback import FallbackPipeline
         pipeline = FallbackPipeline(fallback_providers)
         df = pipeline.process(df)

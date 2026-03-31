@@ -1,4 +1,4 @@
-# full_data.py - Updated with preprocessing step
+# non_mouse_data.py - Classify non-mouse samples only
 
 import polars as pl
 from pathlib import Path
@@ -31,13 +31,19 @@ FINAL_LABEL_MAP = {
     "uncertain_medspacy": "UNCERTAIN",
 }
 
+MOUSE_EXCLUDE = [
+    "Mus musculus",
+    "Mus musculus domesticus",
+    "Mus musculus musculus",
+]
+
 if __name__ == "__main__":
     # Ensure outputs folder exists
     output_dir = Path("outputs")
     output_dir.mkdir(exist_ok=True)
 
     # =========================================================================
-    # Step 1: Load raw data
+    # Step 1: Load raw data and filter out mouse samples
     # =========================================================================
     print("Loading data...")
     all_samples = pl.read_csv(
@@ -46,25 +52,23 @@ if __name__ == "__main__":
         infer_schema_length=0,
     )
 
-    # all_samples = all_samples.head(100)
-
     print(f"Total samples loaded: {len(all_samples)}")
-    print(f"Total columns: {len(all_samples.columns)}")
+
+    # Filter out mouse samples
+    non_mouse = all_samples.filter(
+        ~pl.col("organism_scientific_name").is_in(MOUSE_EXCLUDE)
+    )
+    print(f"Non-mouse samples: {len(non_mouse)} (excluded {len(all_samples) - len(non_mouse)} mouse samples)")
+    print(f"Total columns: {len(non_mouse.columns)}")
 
     # =========================================================================
-    # Step 2: Text Preprocessing Pipeline (NEW)
+    # Step 2: Text Preprocessing Pipeline
     # =========================================================================
     print("\n=== Text Preprocessing ===")
 
-    # Configure preprocessing (use defaults or customize)
-    config = TextColumnConfig(
-        # Override defaults if needed:
-        # min_avg_length=8.0,
-        # min_non_null_pct=0.005,
-    )
+    config = TextColumnConfig()
 
-    # Identify column tiers (for reporting)
-    col_tiers = identify_viable_text_columns(all_samples, config)
+    col_tiers = identify_viable_text_columns(non_mouse, config)
     print(
         f"Priority columns found: {len(col_tiers['priority'])} - {col_tiers['priority']}"
     )
@@ -75,11 +79,10 @@ if __name__ == "__main__":
     if col_tiers["discovered"]:
         print(f"  First 10: {col_tiers['discovered'][:10]}")
 
-    # Preprocess: normalize text columns (creates _norm suffix versions)
-    all_samples, col_tiers = preprocess_dataframe(
-        all_samples,
+    non_mouse, col_tiers = preprocess_dataframe(
+        non_mouse,
         config=config,
-        include_discovered=False,  # Set True for comprehensive scanning
+        include_discovered=False,
     )
     print(f"Created {len(col_tiers['normalized'])} normalized columns")
 
@@ -94,7 +97,6 @@ if __name__ == "__main__":
         get_default_target_rules,
     )
 
-    # Step 3: Get singleton pipeline (auto-initialized with default rules)
     print("\nInitializing medspacy pipeline...")
     nlp = get_nlp()
     print(
@@ -107,7 +109,7 @@ if __name__ == "__main__":
     # Step 4: Generate disease-specific rules
     # =========================================================================
     cancer_rules, non_cancer_rules = get_default_target_rules()
-    unique_diseases = all_samples.select("disease").unique().to_series().to_list()
+    unique_diseases = non_mouse.select("disease").unique().to_series().to_list()
     auto_rules, skipped = generate_disease_rules(
         unique_diseases, nlp, cancer_rules + non_cancer_rules
     )
@@ -117,11 +119,11 @@ if __name__ == "__main__":
         print("Added {} auto-generated disease rules".format(len(auto_rules)))
 
     # =========================================================================
-    # Step 5: MedSpaCy Classification
+    # Step 5: Classification
     # =========================================================================
-    print("\n=== MedSpaCy Classification ===")
+    print("\n=== Classification ===")
     predicted_df = classify_cancer_samples(
-        all_samples,
+        non_mouse,
         nlp_pipeline=nlp,
         batch_size=64,
         use_normalized=True,
@@ -139,11 +141,8 @@ if __name__ == "__main__":
     )
     print(summary)
 
-    # No need for the "uncertain filtering + re-processing" stage anymore
-    # MedSpaCy handles everything in one pass
-
     # =========================================================================
-    # Step 10: Display results
+    # Step 6: Display results
     # =========================================================================
     print("\n=== Final Classification Summary ===")
     final_summary = (
@@ -154,13 +153,13 @@ if __name__ == "__main__":
     print(final_summary)
 
     # =========================================================================
-    # Step 11: Export results
+    # Step 7: Export results
     # =========================================================================
-    # Define columns to keep (exclude _norm columns from export)
     cols_to_keep = [
         "run_accession",
         "experiment_alias",
         "bioproject",
+        "organism_scientific_name",
         "source_name",
         "tissue",
         "phenotype",
@@ -190,12 +189,12 @@ if __name__ == "__main__":
 
     cols_to_keep = [c for c in cols_to_keep if c in predicted_df.columns]
 
-    # output_file = output_dir / "classified_samples.csv"
-    # predicted_df.select(cols_to_keep).write_csv(output_file)
-    # print(f"\n✓ Exported full results to: {output_file}")
+    output_file = output_dir / "non_mouse_classified.csv"
+    predicted_df.select(cols_to_keep).write_csv(output_file)
+    print(f"\n✓ Exported results to: {output_file}")
 
     # =========================================================================
-    # Step 12: Export confirmed_by_medspacy subset
+    # Step 8: Export confirmed_by_medspacy subset
     # =========================================================================
     predicted_df_filtered = predicted_df.filter(
         pl.col("final_label") == "confirmed_by_medspacy"
@@ -203,7 +202,3 @@ if __name__ == "__main__":
 
     print(f"\n=== Confirmed by medspacy ({len(predicted_df_filtered)} samples) ===")
     print(predicted_df_filtered.head(20))
-
-    # confirmed_output = output_dir / "confirmed_by_medspacy.csv"
-    # predicted_df_filtered.write_csv(confirmed_output)
-    # print(f"✓ Exported medspacy-confirmed results to: {confirmed_output}")
