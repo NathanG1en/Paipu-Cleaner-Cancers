@@ -32,6 +32,7 @@ class MedSpaCyLabel(str, Enum):
     NON_CANCER = "NON_CANCER"
     NO_SIGNAL = "NO_SIGNAL"
 
+
 @dataclass(frozen=True)
 class ClassifierConfig:
     """
@@ -56,6 +57,8 @@ class ClassifierConfig:
         "tissue",
         "phenotype",
         "disease",
+        "disease_state",  # recently added
+        "diagnosis",  # recently added
         "cell_type",
         "tumor_type",
     )

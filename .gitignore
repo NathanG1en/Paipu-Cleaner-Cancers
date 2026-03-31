@@ -14,3 +14,6 @@ data/
 *.xlsx
 data/
 Cancers-Freya/combined_metadata_noncancer_removed.csv
+
+# environment 
+.env

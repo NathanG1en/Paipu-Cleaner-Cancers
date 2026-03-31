@@ -22,6 +22,7 @@ from medspacy.ner import TargetRule
 from config import (
     PRIORITY_COLS,
     ClassificationLabel as CL,
+    MedSpaCyLabel as ML,
     DEFAULT_CONFIG,
 )
 
@@ -59,6 +60,40 @@ if TYPE_CHECKING:
 
 
 # =============================================================================
+# Resolution Attribution
+# =============================================================================
+
+def _determine_resolved_by(
+    regex_label: str,
+    med_label: str,
+    confidence_category: str,
+) -> str:
+    """
+    Determine which stage actually produced the final classification.
+
+    Uses the raw inputs (regex_label, med_label) to attribute correctly,
+    rather than just looking at the final confidence_category.
+    """
+    regex_uncertain = regex_label.startswith("uncertain")
+    med_no_signal = med_label in (ML.NO_SIGNAL.value, "NO_SIGNAL")
+
+    # Neither stage found anything → defaulted to non-cancer
+    if regex_uncertain and med_no_signal:
+        return "default"
+
+    # Regex was uncertain, but MedSpaCy found something → MedSpaCy decided
+    if regex_uncertain and not med_no_signal:
+        return "medspacy"
+
+    # Regex was confident, MedSpaCy had no signal → regex decided
+    if not regex_uncertain and med_no_signal:
+        return "regex"
+
+    # Both stages had a signal → both contributed
+    return "regex+medspacy"
+
+
+# =============================================================================
 # Main Classification Orchestrator
 # =============================================================================
 
@@ -68,13 +103,17 @@ def classify_cancer_samples(
     batch_size: int = DEFAULT_CONFIG.batch_size,
     use_normalized: bool = True,
     priority_cols: Tuple[str, ...] = PRIORITY_COLS,
+    fallback_providers: Optional[List] = None,
 ) -> pl.DataFrame:
     """
-    Classify samples as cancer/non-cancer using regex and MedSpaCy.
+    Classify samples as cancer/non-cancer using regex, MedSpaCy, and
+    optional fallback providers.
 
-    Two-stage classification:
+    Stages:
     1. Regex-based pattern matching for quick filtering
     2. MedSpaCy NLP for context-aware classification
+    3. (Optional) Fallback pipeline for no-signal samples:
+       expanded search → API enrichment → LLM classification
 
     Args:
         df: Input DataFrame with text metadata columns.
@@ -82,10 +121,12 @@ def classify_cancer_samples(
         batch_size: Number of texts per MedSpaCy batch.
         use_normalized: Whether to use pre-normalized columns.
         priority_cols: Columns to search for cancer indicators.
+        fallback_providers: Optional list of FallbackProvider instances.
+            Each is tried in order for unresolved samples.
 
     Returns:
         DataFrame with added columns: regex_label, regex_reason,
-        med_label, med_reason, confidence_category.
+        med_label, med_reason, confidence_category, resolved_by.
     """
     available_cols = [c for c in priority_cols if c in df.columns]
 
@@ -104,7 +145,7 @@ def classify_cancer_samples(
         use_normalized=use_normalized,
     )
 
-    # Stage 3: Combine results
+    # Combine regex + MedSpaCy results
     df = df.with_columns(
         pl.struct(["regex_label", "med_label", "med_source_columns"])
         .map_elements(
@@ -115,6 +156,24 @@ def classify_cancer_samples(
         )
         .alias("confidence_category")
     )
+
+    # Add resolved_by tracking — based on actual inputs, not just final output
+    df = df.with_columns(
+        pl.struct(["regex_label", "med_label", "confidence_category"])
+        .map_elements(
+            lambda x: _determine_resolved_by(
+                x["regex_label"], x["med_label"], x["confidence_category"]
+            ),
+            return_dtype=pl.Utf8,
+        )
+        .alias("resolved_by")
+    )
+
+    # Stage 3: Fallback pipeline for no-signal samples
+    if fallback_providers:
+        from fallback import FallbackPipeline
+        pipeline = FallbackPipeline(fallback_providers)
+        df = pipeline.process(df)
 
     return df
 
