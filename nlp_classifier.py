@@ -24,6 +24,9 @@ if TYPE_CHECKING:
     from spacy.tokens import Doc
 
 
+# Labels that indicate a cancer entity (includes auto-generated CANCER_TYPE)
+_CANCER_LABELS = {"CANCER", "CANCER_TYPE"}
+
 # =============================================================================
 # MedSpaCy Classification
 # =============================================================================
@@ -53,7 +56,7 @@ def _classify_doc(doc: "Doc") -> Dict[str, str]:
             "is_negated": is_negated,
         })
 
-        if ent.label_ == "CANCER":
+        if ent.label_ in _CANCER_LABELS:
             if is_negated:
                 negated_cancer_count += 1
                 negated_cancer_terms.append(ent.text)
@@ -135,7 +138,7 @@ def medspacy_classify_batch(
                 doc = nlp_pipeline(text.strip().lower())
                 for ent in doc.ents:
                     if not getattr(ent._, "is_negated", False):
-                        if ent.label_ == ML.CANCER.value:
+                        if ent.label_ in _CANCER_LABELS:
                             found_in_cols.append(f"{col}:{ent.text}")
                             cancer_in_cols.append(f"{col}:{ent.text}")
                         elif ent.label_ == ML.NON_CANCER.value:
