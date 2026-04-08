@@ -122,7 +122,7 @@ class RegexPatterns:
         r"\boncolog(?:y|ic|ical)\b|\boncogen(?:ic|e|es)\b|"
         r"\bhemangiosarcomas?\b|\bhaemangiosarcomas?\b|"
         r"\boligodendrogliomas?\b|\bmastocytomas?\b|\bfibrosarcomas?\b|"
-        r"\bgliomas?\b|\bpheochromocytomas?\b|\bintratumou?ral\b|\bTILs?\b|"
+        r"\bgliomas?\b|\bpheochromocytomas?\b|\bintratumou?ral\b|\bTILs?\b|\bmesotheli\w*\b|"
         r"\bDLBCL\b|\bTNBC\b|\bHCC\b|\bNSCLC\b|\bSCLC\b|\bRCC\b|"
         r"\bAML\b|\bCLL\b|\bMCL\b|"
         r"\bCTVT\w*\b|\bwalker\s?256\b|"
@@ -256,6 +256,9 @@ CANCER_RULE_DEFINITIONS: List[Tuple[str, str, str]] = [
     ("", "CANCER", r"\bleiomyosarcomas?\b"),
     ("", "CANCER", r"\brhabdomyosarcomas?\b"),
     ("", "CANCER", r"\bhistiocytic sarcomas?\b"),
+    ("", "CANCER", r"\bmesotheli\w*\b"),
+    ("mesothelioma", "CANCER", ""),
+    ("mesothelial", "CANCER", ""),
     ("hemangiosarcoma", "CANCER", ""),
     ("haemangiosarcoma", "CANCER", ""),
     ("oligodendroglioma", "CANCER", ""),
@@ -407,6 +410,7 @@ CANCER_KEYWORDS: FrozenSet[str] = frozenset(
         "pheochromocytoma",
         "intratumoral",
         "mesothelioma",
+        "mesothelial",
     }
 )
 
