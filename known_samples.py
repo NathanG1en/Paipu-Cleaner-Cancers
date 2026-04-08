@@ -64,10 +64,9 @@ if __name__ == "__main__":
     # Add Ollama fallback
     # fallback_providers.append(OllamaProvider(model="llama3.2"))
     # print("LLM fallback enabled (Ollama)")
-    fallback_providers = []
     predicted_df = classify_cancer_samples(
         df,
-        fallback_providers=fallback_providers,
+        fallback_providers=False,
     )
 
     # Re-attach ground-truth is_cancer for validation

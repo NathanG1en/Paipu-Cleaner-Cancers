@@ -30,6 +30,7 @@ if TYPE_CHECKING:
 # Data Types
 # =============================================================================
 
+
 @dataclass
 class FallbackResult:
     """Standardized result from any fallback provider."""
@@ -56,6 +57,7 @@ class FallbackResult:
 # =============================================================================
 # Provider Protocol
 # =============================================================================
+
 
 class FallbackProvider(ABC):
     """
@@ -96,6 +98,7 @@ class FallbackProvider(ABC):
 # Built-in Provider: Expanded Column Search
 # =============================================================================
 
+
 class ExpandedSearchProvider(FallbackProvider):
     """
     Scans ALL text columns (not just priority) for cancer terms.
@@ -113,10 +116,26 @@ class ExpandedSearchProvider(FallbackProvider):
         self,
         nlp_pipeline: Optional["Language"] = None,
         exclude_patterns: Tuple[str, ...] = (
-            "accession", "uuid", "hash", "checksum", "md5", "sha",
-            "url", "path", "date", "time", "run_", "experiment_",
-            "study_", "sample_accession", "biosample", "bioproject",
-            "library_", "protocol", "single-cell", "bulk",
+            "accession",
+            "uuid",
+            "hash",
+            "checksum",
+            "md5",
+            "sha",
+            "url",
+            "path",
+            "date",
+            "time",
+            "run_",
+            "experiment_",
+            "study_",
+            "sample_accession",
+            "biosample",
+            "bioproject",
+            "library_",
+            "protocol",
+            "single-cell",
+            "bulk",
         ),
     ):
         self._nlp = nlp_pipeline
@@ -125,6 +144,7 @@ class ExpandedSearchProvider(FallbackProvider):
     def _get_nlp(self) -> "Language":
         if self._nlp is None:
             from pipeline import get_nlp
+
             self._nlp = get_nlp()
         return self._nlp
 
@@ -143,8 +163,15 @@ class ExpandedSearchProvider(FallbackProvider):
                 continue
 
             # Skip columns already searched in priority stage
-            if col in ("title", "source_name", "tissue", "disease",
-                       "cell_type", "tumor_type", "phenotype"):
+            if col in (
+                "title",
+                "source_name",
+                "tissue",
+                "disease",
+                "cell_type",
+                "tumor_type",
+                "phenotype",
+            ):
                 continue
 
             text = val.strip().lower()
@@ -164,8 +191,15 @@ class ExpandedSearchProvider(FallbackProvider):
                 col_lower = col.lower()
                 if any(p in col_lower for p in self._exclude):
                     continue
-                if col in ("title", "source_name", "tissue", "disease",
-                           "cell_type", "tumor_type", "phenotype"):
+                if col in (
+                    "title",
+                    "source_name",
+                    "tissue",
+                    "disease",
+                    "cell_type",
+                    "tumor_type",
+                    "phenotype",
+                ):
                     continue
                 extra_texts.append(val.strip())
 
@@ -174,7 +208,9 @@ class ExpandedSearchProvider(FallbackProvider):
                 nlp = self._get_nlp()
                 doc = nlp(combined)
                 for ent in doc.ents:
-                    if ent.label_ == "CANCER" and not getattr(ent._, "is_negated", False):
+                    if ent.label_ == "CANCER" and not getattr(
+                        ent._, "is_negated", False
+                    ):
                         cancer_hits.append(f"nlp:{ent.text}")
                     elif ent.label_ == "NON_CANCER":
                         non_cancer_hits.append(f"nlp:{ent.text}")
@@ -206,6 +242,7 @@ class ExpandedSearchProvider(FallbackProvider):
 # Fallback Pipeline Orchestrator
 # =============================================================================
 
+
 class FallbackPipeline:
     """
     Orchestrates fallback providers in order for unresolved samples.
@@ -236,17 +273,23 @@ class FallbackPipeline:
         if "resolved_by" not in df.columns:
             df = df.with_columns(
                 pl.when(
-                    pl.col("confidence_category").is_in([
-                        CL.CONFIDENT_CANCER.value, CL.LIKELY_CANCER.value,
-                    ])
+                    pl.col("confidence_category").is_in(
+                        [
+                            CL.CONFIDENT_CANCER.value,
+                            CL.LIKELY_CANCER.value,
+                        ]
+                    )
                 )
                 .then(pl.lit("regex"))
                 .when(pl.col("confidence_category") == CL.CONFIRMED_BY_MEDSPACY.value)
                 .then(pl.lit("medspacy"))
                 .when(
-                    pl.col("confidence_category").is_in([
-                        CL.CONFIRMED_NON_CANCER.value, CL.LIKELY_NON_CANCER.value,
-                    ])
+                    pl.col("confidence_category").is_in(
+                        [
+                            CL.CONFIRMED_NON_CANCER.value,
+                            CL.LIKELY_NON_CANCER.value,
+                        ]
+                    )
                 )
                 .then(pl.lit("regex+medspacy"))
                 .otherwise(pl.lit("default"))
@@ -258,11 +301,12 @@ class FallbackPipeline:
 
         # Find unresolved samples (no_relevant_terms)
         mask = (
-            (pl.col("confidence_category") == CL.CONFIRMED_NON_CANCER.value) &
-            pl.col("med_reason").str.contains("no_relevant_terms")
-        )
+            pl.col("confidence_category") == CL.CONFIRMED_NON_CANCER.value
+        ) & pl.col("med_reason").str.contains("no_relevant_terms")
 
-        unresolved_indices = df.with_row_index("_idx").filter(mask).get_column("_idx").to_list()
+        unresolved_indices = (
+            df.with_row_index("_idx").filter(mask).get_column("_idx").to_list()
+        )
 
         if not unresolved_indices:
             return df
@@ -271,7 +315,8 @@ class FallbackPipeline:
 
         for provider in self.providers:
             still_unresolved = [
-                i for i in unresolved_indices
+                i
+                for i in unresolved_indices
                 if rows[i].get("_resolved", False) is False
             ]
 
@@ -293,10 +338,12 @@ class FallbackPipeline:
         new_resolved = [r.get("resolved_by", "default") for r in rows]
         new_reasons = [r.get("fallback_reason", "") for r in rows]
 
-        df = df.with_columns([
-            pl.Series("confidence_category", new_categories),
-            pl.Series("resolved_by", new_resolved),
-            pl.Series("fallback_reason", new_reasons),
-        ])
+        df = df.with_columns(
+            [
+                pl.Series("confidence_category", new_categories),
+                pl.Series("resolved_by", new_resolved),
+                pl.Series("fallback_reason", new_reasons),
+            ]
+        )
 
         return df

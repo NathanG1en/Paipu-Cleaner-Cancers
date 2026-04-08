@@ -58,7 +58,9 @@ if __name__ == "__main__":
     non_mouse = all_samples.filter(
         ~pl.col("organism_scientific_name").is_in(MOUSE_EXCLUDE)
     )
-    print(f"Non-mouse samples: {len(non_mouse)} (excluded {len(all_samples) - len(non_mouse)} mouse samples)")
+    print(
+        f"Non-mouse samples: {len(non_mouse)} (excluded {len(all_samples) - len(non_mouse)} mouse samples)"
+    )
     print(f"Total columns: {len(non_mouse.columns)}")
 
     # =========================================================================
@@ -127,6 +129,7 @@ if __name__ == "__main__":
         nlp_pipeline=nlp,
         batch_size=64,
         use_normalized=True,
+        use_fallback=False,
     )
 
     predicted_df = predicted_df.with_columns(
@@ -180,6 +183,8 @@ if __name__ == "__main__":
         "tissue_cell_type",
         "cell_types",
         "cancer_type",
+        "is_cell_line",
+        "is_benign",
         "final_label",
         "regex_label",
         "med_label",

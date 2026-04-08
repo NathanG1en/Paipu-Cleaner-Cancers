@@ -45,6 +45,9 @@ from nlp_classifier import (
     resolve_uncertain,
 )
 
+# Re-export from metadata_enrichment
+from metadata_enrichment import enrich_metadata
+
 # Re-export from pipeline
 from pipeline import (
     get_default_target_rules,
@@ -62,6 +65,7 @@ if TYPE_CHECKING:
 # =============================================================================
 # Resolution Attribution
 # =============================================================================
+
 
 def _determine_resolved_by(
     regex_label: str,
@@ -97,6 +101,7 @@ def _determine_resolved_by(
 # Main Classification Orchestrator
 # =============================================================================
 
+
 def classify_cancer_samples(
     df: pl.DataFrame,
     nlp_pipeline: Optional["Language"] = None,
@@ -106,7 +111,7 @@ def classify_cancer_samples(
     fallback_providers: Optional[List] = None,
     use_regex: bool = True,
     use_medspacy: bool = True,
-    use_fallback: bool = True,
+    use_fallback: bool = False,
 ) -> pl.DataFrame:
     """
     Classify samples as cancer/non-cancer using regex, MedSpaCy, and
@@ -140,10 +145,12 @@ def classify_cancer_samples(
     if use_regex:
         df = apply_regex_classification(df, available_cols, use_normalized)
     else:
-        df = df.with_columns([
-            pl.lit(CL.UNCERTAIN_NO_SIGNAL.value).alias("regex_label"),
-            pl.lit("skipped").alias("regex_reason"),
-        ])
+        df = df.with_columns(
+            [
+                pl.lit(CL.UNCERTAIN_NO_SIGNAL.value).alias("regex_label"),
+                pl.lit("skipped").alias("regex_reason"),
+            ]
+        )
 
     # Stage 2: MedSpaCy classification
     if use_medspacy:
@@ -158,11 +165,13 @@ def classify_cancer_samples(
             use_normalized=use_normalized,
         )
     else:
-        df = df.with_columns([
-            pl.lit(ML.NO_SIGNAL.value).alias("med_label"),
-            pl.lit("skipped").alias("med_reason"),
-            pl.lit("").alias("med_source_columns"),
-        ])
+        df = df.with_columns(
+            [
+                pl.lit(ML.NO_SIGNAL.value).alias("med_label"),
+                pl.lit("skipped").alias("med_reason"),
+                pl.lit("").alias("med_source_columns"),
+            ]
+        )
 
     # Combine regex + MedSpaCy results
     df = df.with_columns(
@@ -191,8 +200,12 @@ def classify_cancer_samples(
     # Stage 3: Fallback pipeline for no-signal samples
     if use_fallback and fallback_providers:
         from fallback import FallbackPipeline
+
         pipeline = FallbackPipeline(fallback_providers)
         df = pipeline.process(df)
+
+    # Stage 4: Metadata enrichment (is_cell_line, is_benign)
+    df = enrich_metadata(df, use_normalized=use_normalized)
 
     return df
 
@@ -205,6 +218,7 @@ _apply_regex_classification = apply_regex_classification
 def medspacy_classify(row_texts, nlp_pipeline=None):
     """Deprecated: Use the pipeline directly via classify_cancer_samples()."""
     import warnings
+
     warnings.warn(
         "medspacy_classify() is deprecated. Use classify_cancer_samples() instead.",
         DeprecationWarning,

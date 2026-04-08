@@ -406,6 +406,7 @@ CANCER_KEYWORDS: FrozenSet[str] = frozenset(
         "glioma",
         "pheochromocytoma",
         "intratumoral",
+        "mesothelioma",
     }
 )
 
@@ -455,3 +456,72 @@ CONTEXT_RULE_DEFINITIONS: List[Tuple[str, str, str]] = [
     ("denies", "NEGATED_EXISTENCE", "FORWARD"),
     ("denied", "NEGATED_EXISTENCE", "FORWARD"),
 ]
+
+
+# =============================================================================
+# Metadata Enrichment Patterns
+# =============================================================================
+
+# Cell line detection regex — matches explicit "cell line" phrases and
+# common named cell lines found across the dataset.
+# NOTE: All patterns are lowercase because normalize_text_column() lowercases
+# the text before matching. Non-alphanumeric chars (except hyphen) are also
+# stripped by normalization, so patterns use simplified forms.
+CELL_LINE_PATTERN: str = (
+    r"(?:"
+    # Explicit cell line phrases
+    r"\bcell[\s_-]?lines?\b"
+    r"|\bcell[\s_-]?culture\b"
+    # Common named cell lines (mouse/human/general)
+    r"|\bhela\b|\bhek[\s-]?293\b|\b293t?\b"
+    r"|\bmcf[\s-]?[0-9]+\b|\bmda[\s-]?mb[\s-]?\d*\b"
+    r"|\ba549\b|\bjurkat\b|\bk562\b|\bu937\b"
+    r"|\braw[\s-]?264\b|\bnih[\s-]?3t3\b|\bcho\b|\bvero\b|\bmdck\b"
+    r"|\bpc[\s-]?3\b|\blncap\b|\bbt[\s-]?474\b|\bsk[\s-]?br\b"
+    # Mouse cancer cell lines
+    r"|\b4t1\b|\bb16(?:f\d+)?\b|\bct26\b|\bmc38\b|\bemt6\b"
+    r"|\be0771\b|\bmb49\b|\bkpc\b|\bmyc[\s-]?cap\b"
+    r"|\bpanc[\s-]?\d+\b|\bllc\b|\bll[\s/]2\b"
+    r"|\brm1\b|\brenca\b|\bid8\b|\bpan02\b"
+    r"|\bel4\b|\bp815\b|\byac[\s-]?1\b|\brma\b"
+    r"|\baml12\b|\bhepa[\s-]?1[\s-]?6?\b|\bh22\b"
+    r"|\bs180\b|\bwalker[\s-]?256\b"
+    # Rat cell lines
+    r"|\br3327\b|\bat[\s-]?1\b|\bmat[\s-]?lylu\b"
+    # Canine / veterinary
+    r"|\bctvt\b|\bd17\b|\bcmt\d*\b"
+    r")"
+)
+
+# Benign detection regex
+BENIGN_PATTERN: str = (
+    r"(?:"
+    r"\bbenign\b"
+    r"|\bnon[\s-]?malignant\b"
+    r"|\bbenign\s+(?:tumou?r|neoplasm|lesion|growth)\b"
+    r")"
+)
+
+# Columns to search for cell line signals (order = priority)
+CELL_LINE_SEARCH_COLS: Tuple[str, ...] = (
+    "cell_line",
+    "cell_type",
+    "source_name",
+    "model",
+    "tumor_type",
+    "title",
+    "tissue_cell_type",
+    "cell_types",
+    "celltype",
+)
+
+# Columns to search for benign signals
+BENIGN_SEARCH_COLS: Tuple[str, ...] = (
+    "disease",
+    "source_name",
+    "tissue",
+    "phenotype",
+    "tumor_type",
+    "title",
+    "cell_type",
+)
