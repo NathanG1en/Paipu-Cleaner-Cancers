@@ -410,28 +410,7 @@ CANCER_KEYWORDS: FrozenSet[str] = frozenset(
     }
 )
 
-SPECIFIC_CANCER_TYPES: FrozenSet[str] = frozenset(
-    {
-        "carcinoma",
-        "sarcoma",
-        "lymphoma",
-        "leukemia",
-        "leukaemia",
-        "melanoma",
-        "glioma",
-        "blastoma",
-        "myeloma",
-        "hemangiosarcoma",
-        "haemangiosarcoma",
-        "oligodendroglioma",
-        "mastocytoma",
-        "fibrosarcoma",
-        "chondrosarcoma",
-        "liposarcoma",
-        "leiomyosarcoma",
-        "rhabdomyosarcoma",
-    }
-)
+
 
 # =============================================================================
 # MedSpaCy Context Rule Definitions (negation detection)
