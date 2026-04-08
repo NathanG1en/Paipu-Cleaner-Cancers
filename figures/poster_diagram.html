@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hybrid Cancer Classification Pipeline Workflow</title>
+    <link href="https://fonts.googleapis.com/css2?family=Liberation+Sans:wght@400;700&family=Arial:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Arial', 'Liberation Sans', sans-serif;
+            background-color: #ffffff;
+            min-height: 100vh;
+            padding: 40px 20px;
+            color: #000;
+        }
+        .page-wrapper {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        .diagram-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 500px;
+        }
+        #mermaid-target svg {
+            max-width: 100%;
+            height: auto;
+        }
+        .caption {
+            text-align: center;
+            margin-top: 20px;
+            color: #000;
+            font-size: 1.1rem;
+            font-weight: 700;
+            font-family: 'Times New Roman', serif;
+        }
+        .loading { color: #666; font-size: 1rem; padding: 40px; }
+        .export-controls {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            display: flex;
+            gap: 10px;
+            font-family: Arial, sans-serif;
+            z-index: 1000;
+        }
+        .export-btn {
+            background: #f8fafc;
+            border: 1px solid #cbd5e1;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            color: #334155;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            font-weight: bold;
+            transition: all 0.2s;
+        }
+        .export-btn:hover {
+            background: #e2e8f0;
+        }
+    </style>
+</head>
+<body>
+    <div class="export-controls" id="exportControls" style="display:none;">
+        <button class="export-btn" onclick="exportSVG('poster_diagram')">📥 SVG</button>
+        <button class="export-btn" onclick="exportPNG('poster_diagram')">📥 PNG (High-Res)</button>
+    </div>
+
+    <div class="page-wrapper">
+        <div class="diagram-container" id="mermaid-target"><span class="loading">Rendering diagram…</span></div>
+        <p class="caption">
+            Figure 1: Overview of the hybrid cancer classification architecture.
+        </p>
+    </div>
+
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+
+        mermaid.initialize({
+            startOnLoad: false,
+            theme: 'base',
+            themeVariables: {
+                primaryColor: '#ffffff',
+                primaryTextColor: '#000000',
+                primaryBorderColor: '#000000',
+                lineColor: '#222222',
+                fontFamily: 'Arial, sans-serif',
+                fontSize: '15px'
+            },
+            flowchart: {
+                curve: 'linear', /* Architectural straight lines */
+                nodeSpacing: 40,
+                rankSpacing: 60,
+                htmlLabels: true
+            }
+        });
+
+        const diagram = `
+flowchart LR
+    %% Base colors mapping the pastel inspiration
+    classDef storage fill:#fff,stroke:#000,stroke-width:2px,color:#000,rx:15,ry:15,font-weight:bold;
+    classDef storageItem fill:#fff,stroke:#000,stroke-width:2px,color:#000,font-weight:bold;
+    
+    classDef purple fill:#c7aed0,stroke:#6f4e8b,stroke-width:2px,color:#000,rx:12,ry:12,font-weight:bold;
+    classDef purpleItem fill:#a084af,stroke:#6f4e8b,stroke-width:1px,color:#000,font-size:12px;
+    
+    classDef blue fill:#9ecae1,stroke:#3182bd,stroke-width:2px,color:#000,rx:8,ry:8,font-weight:bold;
+    
+    classDef pinkTitle fill:#f4ccdb,stroke:#c27a94,stroke-width:2px,color:#000,rx:12,ry:12,font-weight:bold;
+    classDef pinkItem fill:#f4ccdb,stroke:#c27a94,stroke-width:2px,color:#000,font-size:13px,font-weight:bold;
+    
+    classDef orangeTitle fill:#fcdcb2,stroke:#d78a3c,stroke-width:2px,color:#000,rx:12,ry:12,font-weight:bold;
+    classDef orangeItem fill:#fcdcb2,stroke:#d78a3c,stroke-width:2px,color:#000,font-size:13px,font-weight:bold;
+    
+    classDef greenTitle fill:#b5dcd0,stroke:#4e9b81,stroke-width:2px,color:#000,rx:12,ry:12,font-weight:bold;
+    classDef greenItem fill:#b5dcd0,stroke:#4e9b81,stroke-width:2px,color:#000,font-size:12px,font-weight:bold;
+
+    %% Data Storage side
+    subgraph STORAGE["<b>Data Storage</b>"]
+        direction TB
+        DB[(Database)]:::storageItem
+        TXT[/Text Files/]:::storageItem
+        DB ~~~ TXT
+    end
+    style STORAGE fill:#fff,stroke:#000,stroke-width:2px,color:#000,rx:20,ry:20
+
+    %% Input/Output column
+    IN["<b>Input</b><br/><hr style='border:1px solid #6f4e8b;margin:5px 0;opacity:0.6'/>DataFrame<br/>Reader"]:::purple
+    OUT["<b>Output</b><br/><hr style='border:1px solid #6f4e8b;margin:5px 0;opacity:0.6'/>Predictions<br/>Writer"]:::purple
+
+    STORAGE -.->|"Reads From"| IN
+    OUT -.->|"Writes To"| STORAGE
+
+    %% Pipeline Center
+    PIPE["<b>Pipeline</b>"]:::blue
+    NLP["<b>medspaCy nlp</b>"]:::blue
+
+    IN -->|"Controls"| PIPE
+    PIPE -->|"Contains"| NLP
+    PIPE -.->|"Controls"| OUT
+
+    %% Resources Block
+    subgraph RESOURCES["<b>Resources</b>"]
+        direction TB
+        R1["Models"]:::pinkItem
+        R2["Regex Patterns"]:::pinkItem
+        R3["Config Rules"]:::pinkItem
+        R1 ~~~ R2
+        R2 ~~~ R3
+    end
+    style RESOURCES fill:#fae1ea,stroke:#c27a94,stroke-width:2px,color:#000,rx:15,ry:15
+
+    %% Components Block
+    subgraph COMPONENTS["<b>Components</b>"]
+        direction TB
+        C1["Regex Matcher"]:::orangeItem
+        C2["TargetMatcher"]:::orangeItem
+        C3["ConText"]:::orangeItem
+        C4["Sectionizer"]:::orangeItem
+        C5["Fallback LLM"]:::orangeItem
+        C1 ~~~ C2
+        C2 ~~~ C3
+        C3 ~~~ C4
+        C4 ~~~ C5
+    end
+    style COMPONENTS fill:#fef0d9,stroke:#d78a3c,stroke-width:2px,color:#000,rx:15,ry:15
+
+    RESOURCES -->|"Use"| COMPONENTS
+    NLP -->|"Contains"| COMPONENTS
+
+    %% Extensions API Block
+    subgraph EXT["<b>Feature Extension API</b>"]
+        direction TB
+        E1["<b>Row</b><br/>._.confidence_category<br/>._.resolved_by"]:::greenItem
+        E2["<b>Doc</b><br/>._.is_cell_line<br/>._.is_benign"]:::greenItem
+        E1 ~~~ E2
+    end
+    style EXT fill:#eaf7f1,stroke:#4e9b81,stroke-width:2px,color:#000,rx:15,ry:15
+
+    COMPONENTS -->|"Compliant With"| EXT
+    EXT -->|"Uses"| OUT
+
+    %% Ensure global thick edge style
+    linkStyle default stroke:#000,stroke-width:2px,color:#000,font-weight:bold,font-size:12px;
+`;
+
+        (async () => {
+            const target = document.getElementById('mermaid-target');
+            try {
+                const { svg } = await mermaid.render('architecture-diagram', diagram);
+                target.innerHTML = svg;
+                document.getElementById('exportControls').style.display = 'flex';
+            } catch (err) {
+                target.innerHTML = '<pre style="color:#e74c3c;">' + err + '</pre>';
+            }
+        })();
+
+        // Export Functions
+        window.exportSVG = function(filename) {
+            const svgEl = document.querySelector("#mermaid-target svg");
+            if (!svgEl) return;
+            const str = new XMLSerializer().serializeToString(svgEl);
+            const blob = new Blob([str], { type: "image/svg+xml;charset=utf-8" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = filename + ".svg";
+            a.click();
+        };
+
+        window.exportPNG = function(filename) {
+            const svgEl = document.querySelector("#mermaid-target svg");
+            if (!svgEl) return;
+            const canvas = document.createElement("canvas");
+            const box = svgEl.getBoundingClientRect();
+            const scale = 3; // Sharp high-res for poster
+            canvas.width = box.width * scale;
+            canvas.height = box.height * scale;
+            const ctx = canvas.getContext("2d");
+            ctx.scale(scale, scale);
+            ctx.fillStyle = "white"; // Ensure white background
+            ctx.fillRect(0, 0, box.width, box.height);
+
+            const img = new Image();
+            const str = new XMLSerializer().serializeToString(svgEl);
+            const blob = new Blob([str], { type: "image/svg+xml;charset=utf-8" });
+            const url = URL.createObjectURL(blob);
+
+            img.onload = function() {
+                ctx.drawImage(img, 0, 0, box.width, box.height);
+                URL.revokeObjectURL(url);
+                const a = document.createElement("a");
+                a.download = filename + ".png";
+                a.href = canvas.toDataURL("image/png");
+                a.click();
+            };
+            img.src = url;
+        };
+    </script>
+</body>
+</html>

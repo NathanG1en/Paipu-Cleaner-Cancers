@@ -1,4 +1,3 @@
-# streamlit_app.py
 import streamlit as st
 import polars as pl
 from pathlib import Path
@@ -15,29 +14,10 @@ DATA_PATH = Path("data/combined_metadata_noncancer_removed.csv")
 
 @st.cache_resource
 def load_pipeline():
-    """Load and cache the medspacy pipeline with all rules including disease-specific ones."""
+    """Load and cache the medspacy pipeline - SIMPLIFIED VERSION FOR TESTING"""
     cancer_rules, non_cancer_rules = get_default_target_rules()
-    existing_rules = cancer_rules + non_cancer_rules
-    
     nlp = initialize_medspacy_pipeline(cancer_rules, non_cancer_rules)
-    
-    if DATA_PATH.exists():
-        all_samples = pl.read_csv(
-            str(DATA_PATH),
-            schema_overrides={"group": pl.Utf8},
-            infer_schema_length=0,
-        )
-        unique_diseases = all_samples.select("disease").unique().to_series().to_list()
-        
-        auto_rules, skipped = generate_disease_rules(unique_diseases, nlp, existing_rules)
-        
-        if auto_rules:
-            tm = nlp.get_pipe("medspacy_target_matcher")
-            tm.add(auto_rules)
-        
-        return nlp, len(auto_rules), len(skipped)
-    
-    return nlp, 0, 0
+    return nlp, 0, 0  # No auto-rules for now
 
 st.title("🔬 Cancer Text Classifier")
 st.markdown("Test how text gets classified by the MedSpacy pipeline.")

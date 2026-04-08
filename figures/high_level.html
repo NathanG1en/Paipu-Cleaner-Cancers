@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>High-Level Project Pipeline</title>
+    <link href="https://fonts.googleapis.com/css2?family=Liberation+Sans:wght@400;700&family=Arial:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Arial', 'Liberation Sans', sans-serif;
+            background-color: #ffffff;
+            min-height: 100vh;
+            padding: 40px 20px;
+            color: #000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .page-wrapper {
+            max-width: 800px;
+            width: 100%;
+            margin: 0 auto;
+        }
+        .diagram-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 500px;
+            background: transparent;
+        }
+        #mermaid-target svg {
+            max-width: 100%;
+            height: auto;
+        }
+        .loading { color: #666; font-size: 1.1rem; padding: 40px; text-align: center; font-weight: bold; }
+        .export-controls {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            display: flex;
+            gap: 10px;
+            font-family: Arial, sans-serif;
+            z-index: 1000;
+        }
+        .export-btn {
+            background: #f8fafc;
+            border: 1px solid #cbd5e1;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            color: #334155;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            font-weight: bold;
+            transition: all 0.2s;
+        }
+        .export-btn:hover {
+            background: #e2e8f0;
+        }
+    </style>
+</head>
+<body>
+    <div class="export-controls" id="exportControls" style="display:none;">
+        <button class="export-btn" onclick="exportSVG('high_level')">📥 SVG</button>
+        <button class="export-btn" onclick="exportPNG('high_level')">📥 PNG (High-Res)</button>
+    </div>
+    
+    <div class="page-wrapper">
+        <div class="diagram-container" id="mermaid-target"><span class="loading">Rendering diagram…</span></div>
+    </div>
+
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+
+        mermaid.initialize({
+            startOnLoad: false,
+            theme: 'base',
+            themeVariables: {
+                primaryColor: '#ffffff',
+                primaryTextColor: '#000000',
+                primaryBorderColor: '#000000',
+                lineColor: '#000000',
+                fontFamily: 'Arial, sans-serif',
+                fontSize: '22px'
+            },
+            flowchart: {
+                curve: 'linear', /* Straight structural lines connecting blocks */
+                nodeSpacing: 50,
+                rankSpacing: 80,
+                htmlLabels: true
+            }
+        });
+
+        const diagram = `
+flowchart TD
+    classDef purple fill:#c7aed0,stroke:#6f4e8b,stroke-width:3px,color:#000,rx:15,ry:15;
+    classDef blue fill:#9ecae1,stroke:#3182bd,stroke-width:3px,color:#000,rx:15,ry:15;
+    classDef pink fill:#f4ccdb,stroke:#c27a94,stroke-width:3px,color:#000,rx:15,ry:15;
+    classDef green fill:#b5dcd0,stroke:#4e9b81,stroke-width:3px,color:#000,rx:15,ry:15;
+
+    A["<div style='padding:15px 30px; text-align:center;'><b style='font-size:24px;'>Manual Annotation</b><br/><span style='font-size:16px; opacity:0.8;'>Ground Truth Development</span></div>"]:::purple
+
+    B["<div style='padding:15px 30px; text-align:center;'><b style='font-size:24px;'>Feature / Pattern Extraction</b><br/><span style='font-size:16px; opacity:0.8;'>Keyword &amp; Context Mining</span></div>"]:::blue
+
+    C["<div style='padding:15px 30px; text-align:center;'><b style='font-size:24px;'>Hybrid System (Rules + NLP)</b><br/><span style='font-size:16px; opacity:0.8;'>Regex &amp; MedSpaCy Logic</span></div>"]:::pink
+
+    D["<div style='padding:15px 30px; text-align:center;'><b style='font-size:24px;'>Scalable Labeling Pipeline</b><br/><span style='font-size:16px; opacity:0.8;'>Automated Data Processing</span></div>"]:::green
+         
+    A --> B
+    B --> C
+    C --> D
+
+    linkStyle default stroke:black,stroke-width:4px,color:black;
+`;
+
+        (async () => {
+            const target = document.getElementById('mermaid-target');
+            try {
+                const { svg } = await mermaid.render('high-level-diagram', diagram);
+                target.innerHTML = svg;
+                document.getElementById('exportControls').style.display = 'flex';
+            } catch (err) {
+                target.innerHTML = '<pre style="color:#e74c3c;">' + err + '</pre>';
+            }
+        })();
+
+        // Export Functions
+        window.exportSVG = function(filename) {
+            const svgEl = document.querySelector("#mermaid-target svg");
+            if (!svgEl) return;
+            const str = new XMLSerializer().serializeToString(svgEl);
+            const blob = new Blob([str], { type: "image/svg+xml;charset=utf-8" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = filename + ".svg";
+            a.click();
+        };
+
+        window.exportPNG = function(filename) {
+            const svgEl = document.querySelector("#mermaid-target svg");
+            if (!svgEl) return;
+            const canvas = document.createElement("canvas");
+            const box = svgEl.getBoundingClientRect();
+            // Scale by 3 for sharp high-res poster prints
+            const scale = 3;
+            canvas.width = box.width * scale;
+            canvas.height = box.height * scale;
+            const ctx = canvas.getContext("2d");
+            ctx.scale(scale, scale);
+            ctx.fillStyle = "white"; // Ensure white background
+            ctx.fillRect(0, 0, box.width, box.height);
+
+            const img = new Image();
+            const str = new XMLSerializer().serializeToString(svgEl);
+            const blob = new Blob([str], { type: "image/svg+xml;charset=utf-8" });
+            const url = URL.createObjectURL(blob);
+
+            img.onload = function() {
+                ctx.drawImage(img, 0, 0, box.width, box.height);
+                URL.revokeObjectURL(url);
+                const a = document.createElement("a");
+                a.download = filename + ".png";
+                a.href = canvas.toDataURL("image/png");
+                a.click();
+            };
+            img.src = url;
+        };
+    </script>
+</body>
+</html>
