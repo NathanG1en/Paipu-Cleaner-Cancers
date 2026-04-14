@@ -76,6 +76,34 @@ def _detect_flag(
     return df
 
 
+def _has_cell_line_column_value(df: pl.DataFrame) -> pl.Expr:
+    """
+    Check if the dedicated ``cell_line`` column contains a real
+    (non-null, non-"nan") value, indicating the sample is from a cell line.
+
+    The column often holds semicolon-delimited strings with interspersed
+    "nan" tokens (e.g. ``"nan 4T1 nan nan"``).  This helper returns True
+    when **any** token in the value is not "nan".
+    """
+    if "cell_line" not in df.columns:
+        return pl.lit(False)
+
+    return (
+        pl.col("cell_line")
+        .fill_null("")
+        .cast(pl.Utf8)
+        .str.to_lowercase()
+        .str.replace_all(r"[_/|\\;,]", " ")
+        .str.replace_all(r"\s+", " ")
+        .str.strip_chars()
+        # After cleanup, if only "nan" tokens remain -> no real value
+        .str.replace_all(r"\bnan\b", "")
+        .str.replace_all(r"\s+", "")
+        .str.len_chars()
+        .gt(0)
+    )
+
+
 def enrich_metadata(
     df: pl.DataFrame,
     use_normalized: bool = True,
@@ -84,7 +112,9 @@ def enrich_metadata(
     Add ``is_cell_line`` and ``is_benign`` boolean columns to the DataFrame.
 
     Scans configurable sets of text columns for cell-line and benign
-    indicators, producing one boolean flag per concept.
+    indicators, producing one boolean flag per concept.  For ``is_cell_line``,
+    also checks whether the dedicated ``cell_line`` column carries a real
+    (non-null, non-"nan") value so that arbitrary cell-line names are caught.
 
     Args:
         df: DataFrame (typically post-classification).
@@ -93,12 +123,20 @@ def enrich_metadata(
     Returns:
         DataFrame with ``is_cell_line`` and ``is_benign`` columns added.
     """
+    # Regex-based cell-line detection across multiple columns
     df = _detect_flag(
         df,
         pattern=CELL_LINE_PATTERN,
         search_cols=CELL_LINE_SEARCH_COLS,
         flag_name="is_cell_line",
         use_normalized=use_normalized,
+    )
+
+    # Short-circuit: also flag rows where the dedicated cell_line column
+    # has any real (non-nan) value, regardless of regex match
+    has_cl_col = _has_cell_line_column_value(df)
+    df = df.with_columns(
+        (pl.col("is_cell_line") | has_cl_col).alias("is_cell_line")
     )
 
     df = _detect_flag(
@@ -108,5 +146,38 @@ def enrich_metadata(
         flag_name="is_benign",
         use_normalized=use_normalized,
     )
+
+    # Post-processing: un-flag rows where "adenoma" matched but "carcinoma"
+    # is also present in the same column (mixed adenoma/carcinoma ≠ benign).
+    # Polars regex doesn't support lookaheads, so we handle this here.
+    carcinoma_in_any: List[pl.Expr] = []
+    for col in BENIGN_SEARCH_COLS:
+        col_ref = col
+        if use_normalized and f"{col}_norm" in df.columns:
+            col_ref = f"{col}_norm"
+        elif col not in df.columns:
+            continue
+        carcinoma_in_any.append(
+            normalize_text_column(pl.col(col_ref))
+            .str.contains(r"carcinomas?\b")
+        )
+
+    if carcinoma_in_any:
+        has_carcinoma = pl.any_horizontal(carcinoma_in_any)
+        adenoma_only = pl.any_horizontal([
+            normalize_text_column(
+                pl.col(c if c in df.columns else f"{c}_norm")
+            ).str.contains(r"\badenomas?\b")
+            for c in BENIGN_SEARCH_COLS
+            if c in df.columns or f"{c}_norm" in df.columns
+        ])
+        # Un-flag: if benign was set AND the match was from adenoma AND
+        # carcinoma is also present → not truly benign
+        df = df.with_columns(
+            pl.when(pl.col("is_benign") & adenoma_only & has_carcinoma)
+            .then(pl.lit(False))
+            .otherwise(pl.col("is_benign"))
+            .alias("is_benign")
+        )
 
     return df

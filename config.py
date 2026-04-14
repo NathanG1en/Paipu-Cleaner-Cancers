@@ -415,7 +415,6 @@ CANCER_KEYWORDS: FrozenSet[str] = frozenset(
 )
 
 
-
 # =============================================================================
 # MedSpaCy Context Rule Definitions (negation detection)
 # =============================================================================
@@ -455,6 +454,10 @@ CELL_LINE_PATTERN: str = (
     # Explicit cell line phrases
     r"\bcell[\s_-]?lines?\b"
     r"|\bcell[\s_-]?culture\b"
+    # In vitro / culture indicators
+    r"|\bin[\s_-]?vitro\b"
+    r"|\bprimary[\s_-]?culture\b"
+    r"|\bcultured[\s_-]?(?:cells?|tumou?r)?\b"
     # Common named cell lines (mouse/human/general)
     r"|\bhela\b|\bhek[\s-]?293\b|\b293t?\b"
     r"|\bmcf[\s-]?[0-9]+\b|\bmda[\s-]?mb[\s-]?\d*\b"
@@ -482,6 +485,14 @@ BENIGN_PATTERN: str = (
     r"\bbenign\b"
     r"|\bnon[\s-]?malignant\b"
     r"|\bbenign\s+(?:tumou?r|neoplasm|lesion|growth)\b"
+    # Pre-malignant / borderline indicators
+    r"|\bpre[\s-]?malignant\b"
+    r"|\bhyperplasi(?:a|c|tic)\b"
+    r"|\bdysplasi(?:a|c|tic)\b"
+    r"|\blow[\s-]?grade\b"
+    # Adenoma (benign neoplasm) — mixed adenoma/carcinoma exclusion
+    # handled in metadata_enrichment.py post-processing
+    r"|\badenomas?\b"
     r")"
 )
 
@@ -496,15 +507,20 @@ CELL_LINE_SEARCH_COLS: Tuple[str, ...] = (
     "tissue_cell_type",
     "cell_types",
     "celltype",
+    "sample_type",
+    "condition",
 )
 
 # Columns to search for benign signals
 BENIGN_SEARCH_COLS: Tuple[str, ...] = (
     "disease",
+    "diagnosis",
+    "disease_state",
     "source_name",
     "tissue",
     "phenotype",
     "tumor_type",
     "title",
     "cell_type",
+    "condition",
 )
