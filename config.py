@@ -122,7 +122,7 @@ class RegexPatterns:
         r"\boncolog(?:y|ic|ical)\b|\boncogen(?:ic|e|es)\b|"
         r"\bhemangiosarcomas?\b|\bhaemangiosarcomas?\b|"
         r"\boligodendrogliomas?\b|\bmastocytomas?\b|\bfibrosarcomas?\b|"
-        r"\bgliomas?\b|\bpheochromocytomas?\b|\bintratumou?ral\b|\bTILs?\b|"
+        r"\bgliomas?\b|\bpheochromocytomas?\b|\bintratumou?ral\b|\bTILs?\b|\bmesotheli\w*\b|"
         r"\bDLBCL\b|\bTNBC\b|\bHCC\b|\bNSCLC\b|\bSCLC\b|\bRCC\b|"
         r"\bAML\b|\bCLL\b|\bMCL\b|"
         r"\bCTVT\w*\b|\bwalker\s?256\b|"
@@ -256,6 +256,9 @@ CANCER_RULE_DEFINITIONS: List[Tuple[str, str, str]] = [
     ("", "CANCER", r"\bleiomyosarcomas?\b"),
     ("", "CANCER", r"\brhabdomyosarcomas?\b"),
     ("", "CANCER", r"\bhistiocytic sarcomas?\b"),
+    ("", "CANCER", r"\bmesotheli\w*\b"),
+    ("mesothelioma", "CANCER", ""),
+    ("mesothelial", "CANCER", ""),
     ("hemangiosarcoma", "CANCER", ""),
     ("haemangiosarcoma", "CANCER", ""),
     ("oligodendroglioma", "CANCER", ""),
@@ -407,31 +410,10 @@ CANCER_KEYWORDS: FrozenSet[str] = frozenset(
         "pheochromocytoma",
         "intratumoral",
         "mesothelioma",
+        "mesothelial",
     }
 )
 
-SPECIFIC_CANCER_TYPES: FrozenSet[str] = frozenset(
-    {
-        "carcinoma",
-        "sarcoma",
-        "lymphoma",
-        "leukemia",
-        "leukaemia",
-        "melanoma",
-        "glioma",
-        "blastoma",
-        "myeloma",
-        "hemangiosarcoma",
-        "haemangiosarcoma",
-        "oligodendroglioma",
-        "mastocytoma",
-        "fibrosarcoma",
-        "chondrosarcoma",
-        "liposarcoma",
-        "leiomyosarcoma",
-        "rhabdomyosarcoma",
-    }
-)
 
 # =============================================================================
 # MedSpaCy Context Rule Definitions (negation detection)
@@ -472,6 +454,10 @@ CELL_LINE_PATTERN: str = (
     # Explicit cell line phrases
     r"\bcell[\s_-]?lines?\b"
     r"|\bcell[\s_-]?culture\b"
+    # In vitro / culture indicators
+    r"|\bin[\s_-]?vitro\b"
+    r"|\bprimary[\s_-]?culture\b"
+    r"|\bcultured[\s_-]?(?:cells?|tumou?r)?\b"
     # Common named cell lines (mouse/human/general)
     r"|\bhela\b|\bhek[\s-]?293\b|\b293t?\b"
     r"|\bmcf[\s-]?[0-9]+\b|\bmda[\s-]?mb[\s-]?\d*\b"
@@ -493,12 +479,36 @@ CELL_LINE_PATTERN: str = (
     r")"
 )
 
+BENIGN_KEYWORDS: FrozenSet[str] = frozenset(
+    {
+        "squamous papilloma",
+        "adenoma",
+        "leiomyoma",
+        "rhabdomyoma",
+        "hemangioma",
+        "lipoma",
+        "chondroma",
+        "osteoma",
+        "fibroma",
+        "nevus",
+        "mature teratoma",
+    }
+)
+
 # Benign detection regex
 BENIGN_PATTERN: str = (
     r"(?:"
     r"\bbenign\b"
     r"|\bnon[\s-]?malignant\b"
     r"|\bbenign\s+(?:tumou?r|neoplasm|lesion|growth)\b"
+    # Pre-malignant / borderline indicators
+    r"|\bpre[\s-]?malignant\b"
+    r"|\bhyperplasi(?:a|c|tic)\b"
+    r"|\bdysplasi(?:a|c|tic)\b"
+    r"|\blow[\s-]?grade\b"
+    # Adenoma (benign neoplasm) — mixed adenoma/carcinoma exclusion
+    # handled in metadata_enrichment.py post-processing
+    r"|\badenomas?\b"
     r")"
 )
 
@@ -513,15 +523,20 @@ CELL_LINE_SEARCH_COLS: Tuple[str, ...] = (
     "tissue_cell_type",
     "cell_types",
     "celltype",
+    "sample_type",
+    "condition",
 )
 
 # Columns to search for benign signals
 BENIGN_SEARCH_COLS: Tuple[str, ...] = (
     "disease",
+    "diagnosis",
+    "disease_state",
     "source_name",
     "tissue",
     "phenotype",
     "tumor_type",
     "title",
     "cell_type",
+    "condition",
 )

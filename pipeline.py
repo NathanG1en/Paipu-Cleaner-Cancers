@@ -14,7 +14,6 @@ from medspacy.ner import TargetRule
 
 from config import (
     CANCER_KEYWORDS,
-    SPECIFIC_CANCER_TYPES,
     CANCER_RULE_DEFINITIONS,
     NON_CANCER_RULE_DEFINITIONS,
     CONTEXT_RULE_DEFINITIONS,
@@ -197,11 +196,7 @@ def generate_disease_rules(
         is_cancer_related = any(kw in disease_clean for kw in CANCER_KEYWORDS)
 
         if is_cancer_related:
-            if any(kw in disease_clean for kw in SPECIFIC_CANCER_TYPES):
-                label = "CANCER_TYPE"
-            else:
-                label = "CANCER"
-            new_rules.append(TargetRule(disease.strip(), label))
+            new_rules.append(TargetRule(disease.strip(), "CANCER"))
         else:
             skipped.append("{} (not cancer-related)".format(disease))
 
