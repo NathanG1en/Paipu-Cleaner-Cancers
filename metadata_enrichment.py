@@ -1,3 +1,5 @@
+# TODO: before regex, see the keywords and then do regex
+
 """
 Metadata enrichment for classified samples.
 
@@ -15,6 +17,7 @@ import polars as pl
 from config import (
     CELL_LINE_PATTERN,
     CELL_LINE_SEARCH_COLS,
+    BENIGN_KEYWORDS,
     BENIGN_PATTERN,
     BENIGN_SEARCH_COLS,
 )
@@ -58,9 +61,7 @@ def _detect_flag(
 
         tmp_col = f"_tmp_{flag_name}_{col}"
         df = df.with_columns(
-            normalize_text_column(pl.col(col_ref))
-            .str.contains(pattern)
-            .alias(tmp_col)
+            normalize_text_column(pl.col(col_ref)).str.contains(pattern).alias(tmp_col)
         )
         match_cols.append(tmp_col)
 
@@ -135,9 +136,7 @@ def enrich_metadata(
     # Short-circuit: also flag rows where the dedicated cell_line column
     # has any real (non-nan) value, regardless of regex match
     has_cl_col = _has_cell_line_column_value(df)
-    df = df.with_columns(
-        (pl.col("is_cell_line") | has_cl_col).alias("is_cell_line")
-    )
+    df = df.with_columns((pl.col("is_cell_line") | has_cl_col).alias("is_cell_line"))
 
     df = _detect_flag(
         df,
@@ -146,6 +145,27 @@ def enrich_metadata(
         flag_name="is_benign",
         use_normalized=use_normalized,
     )
+
+    # Keyword-based benign detection: flag rows where any search column
+    # contains a known benign tumor type (e.g. lipoma, fibroma, hemangioma)
+    kw_match_exprs: List[pl.Expr] = []
+    for col in BENIGN_SEARCH_COLS:
+        col_ref = col
+        if use_normalized and f"{col}_norm" in df.columns:
+            col_ref = f"{col}_norm"
+        elif col not in df.columns:
+            continue
+        for kw in BENIGN_KEYWORDS:
+            kw_match_exprs.append(
+                normalize_text_column(pl.col(col_ref))
+                .str.contains(r"\b" + kw + r"\b")
+            )
+
+    if kw_match_exprs:
+        has_benign_kw = pl.any_horizontal(kw_match_exprs)
+        df = df.with_columns(
+            (pl.col("is_benign") | has_benign_kw).alias("is_benign")
+        )
 
     # Post-processing: un-flag rows where "adenoma" matched but "carcinoma"
     # is also present in the same column (mixed adenoma/carcinoma ≠ benign).
@@ -158,19 +178,20 @@ def enrich_metadata(
         elif col not in df.columns:
             continue
         carcinoma_in_any.append(
-            normalize_text_column(pl.col(col_ref))
-            .str.contains(r"carcinomas?\b")
+            normalize_text_column(pl.col(col_ref)).str.contains(r"carcinomas?\b")
         )
 
     if carcinoma_in_any:
         has_carcinoma = pl.any_horizontal(carcinoma_in_any)
-        adenoma_only = pl.any_horizontal([
-            normalize_text_column(
-                pl.col(c if c in df.columns else f"{c}_norm")
-            ).str.contains(r"\badenomas?\b")
-            for c in BENIGN_SEARCH_COLS
-            if c in df.columns or f"{c}_norm" in df.columns
-        ])
+        adenoma_only = pl.any_horizontal(
+            [
+                normalize_text_column(
+                    pl.col(c if c in df.columns else f"{c}_norm")
+                ).str.contains(r"\badenomas?\b")
+                for c in BENIGN_SEARCH_COLS
+                if c in df.columns or f"{c}_norm" in df.columns
+            ]
+        )
         # Un-flag: if benign was set AND the match was from adenoma AND
         # carcinoma is also present → not truly benign
         df = df.with_columns(

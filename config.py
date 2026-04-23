@@ -479,6 +479,22 @@ CELL_LINE_PATTERN: str = (
     r")"
 )
 
+BENIGN_KEYWORDS: FrozenSet[str] = frozenset(
+    {
+        "squamous papilloma",
+        "adenoma",
+        "leiomyoma",
+        "rhabdomyoma",
+        "hemangioma",
+        "lipoma",
+        "chondroma",
+        "osteoma",
+        "fibroma",
+        "nevus",
+        "mature teratoma",
+    }
+)
+
 # Benign detection regex
 BENIGN_PATTERN: str = (
     r"(?:"
