@@ -157,5 +157,6 @@ Run `python known_samples.py` to verify the impact on accuracy.
 
 ## Further Documentation
 
+- **[Quickstart Guide](docs/quickstart.md)** — Hands-on walkthrough of all features, from first run to contributing
 - **[Architecture Guide](docs/architecture.md)** — Deep-dive into pipeline stages, data flow, and module responsibilities
 - **[Developer Guide](docs/developer_guide.md)** — How to extend the pipeline: adding patterns, providers, columns, and flags
