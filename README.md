@@ -1,5 +1,7 @@
 # Freya Cancer Classification Pipeline
 
+**[📖 Documentation](https://nathang1en.github.io/Freya-Cancers-Clean/)** · **[🔬 Live Demo](https://freya-cancer-classifier.streamlit.app/)**
+
 Automated cancer/non-cancer classification of RNA-seq samples from public sequencing repositories (SRA, ENA, DDBJ) using metadata-based NLP. Combines regex pattern matching with [MedSpaCy](https://github.com/medspacy/medspacy) clinical NLP to classify samples based on free-text metadata fields like `source_name`, `tissue`, `disease`, and `title`.
 
 > **Part of the Paipu framework** — a pan-mammalian tumor data pipeline that standardizes and integrates large-scale RNA-seq data and associated SRA metadata into a unified dataset.

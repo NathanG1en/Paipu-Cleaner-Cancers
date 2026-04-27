@@ -17,3 +17,6 @@ Cancers-Freya/combined_metadata_noncancer_removed.csv
 
 # environment 
 .env
+
+# Zensical build output
+site/
