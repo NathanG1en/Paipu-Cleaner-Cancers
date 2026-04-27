@@ -3,6 +3,8 @@
 import polars as pl
 from pathlib import Path
 
+from config import FINAL_LABEL_MAP
+
 from functions import (
     classify_cancer_samples,
     medspacy_classify_batch,
@@ -11,6 +13,9 @@ from functions import (
     initialize_medspacy_pipeline,
     generate_disease_rules,
     get_default_target_rules,
+    get_nlp,
+    reset_nlp,
+    NLPPipelineManager,
     PRIORITY_COLS,
 )
 
@@ -19,17 +24,6 @@ from text_column_processing import (
     preprocess_dataframe,
     identify_viable_text_columns,
 )
-
-FINAL_LABEL_MAP = {
-    "confident_cancer": "CANCER",
-    "likely_cancer": "CANCER",
-    "confirmed_by_medspacy": "CANCER",
-    "confirmed_non_cancer": "NON_CANCER",
-    "likely_non_cancer": "NON_CANCER",
-    "uncertain_no_signal": "UNCERTAIN",
-    "uncertain_weak_signal": "UNCERTAIN",
-    "uncertain_medspacy": "UNCERTAIN",
-}
 
 if __name__ == "__main__":
     # Ensure outputs folder exists
@@ -86,13 +80,6 @@ if __name__ == "__main__":
     # =========================================================================
     # Step 3: Initialize MedSpaCy Pipeline
     # =========================================================================
-    from functions import (
-        get_nlp,
-        reset_nlp,
-        NLPPipelineManager,
-        generate_disease_rules,
-        get_default_target_rules,
-    )
 
     # Step 3: Get singleton pipeline (auto-initialized with default rules)
     print("\nInitializing medspacy pipeline...")
@@ -166,9 +153,13 @@ if __name__ == "__main__":
         "tissue",
         "phenotype",
         "disease",
+        "disease_state",
+        "diagnosis",
         "cell_type",
+        "cell_line",
         "tumor_type",
         "sample_name",
+        "sample_type",
         "condition",
         "tumor",
         "cell_type.2",
@@ -185,23 +176,25 @@ if __name__ == "__main__":
         "is_cell_line",
         "is_benign",
         "final_label",
+        "confidence_category",
+        "resolved_by",
         "regex_label",
         "med_label",
         "regex_reason",
         "med_reason",
+        "med_source_columns",
     ]
 
     cols_to_keep = [c for c in cols_to_keep if c in predicted_df.columns]
 
-    # output_file = output_dir / "classified_samples.csv"
-    # predicted_df.select(cols_to_keep).write_csv(output_file)
-    # print(f"\n✓ Exported full results to: {output_file}")
-
+    output_file = output_dir / "classified_samples.csv"
+    predicted_df.select(cols_to_keep).write_csv(output_file)
+    print(f"\n✓ Exported full results to: {output_file}")
     # =========================================================================
     # Step 12: Export confirmed_by_medspacy subset
     # =========================================================================
     predicted_df_filtered = predicted_df.filter(
-        pl.col("final_label") == "confirmed_by_medspacy"
+        pl.col("confidence_category") == "confirmed_by_medspacy"
     ).select(cols_to_keep)
 
     print(f"\n=== Confirmed by medspacy ({len(predicted_df_filtered)} samples) ===")
