@@ -1,6 +1,6 @@
-# Freya Cancer Classification Pipeline
+# Paipu Cancer Classification Pipeline
 
-**[📖 Documentation](https://nathang1en.github.io/Freya-Cancers-Clean/)** · **[🔬 Live Demo](https://freya-cancer-classifier.streamlit.app/)**
+**[📖 Documentation](https://nathang1en.github.io/Paipu-Cleaner-Cancers/)** · **[🔬 Live Demo](https://paipu-cancer-classifier.streamlit.app/)**
 
 Automated cancer/non-cancer classification of RNA-seq samples from public sequencing repositories (SRA, ENA, DDBJ) using metadata-based NLP. Combines regex pattern matching with [MedSpaCy](https://github.com/medspacy/medspacy) clinical NLP to classify samples based on free-text metadata fields like `source_name`, `tissue`, `disease`, and `title`.
 
@@ -78,7 +78,7 @@ The pipeline uses a **multi-stage hybrid classification** approach:
 ```bash
 # Clone and install dependencies (using uv)
 git clone <repo-url>
-cd Freya-Cancers-Clean
+cd Paipu-Cleaner-Cancers
 uv sync
 ```
 

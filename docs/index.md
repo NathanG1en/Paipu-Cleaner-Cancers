@@ -1,4 +1,4 @@
-# Freya Cancer Classification Pipeline
+# Paipu Cancer Classification Pipeline
 
 Automated cancer/non-cancer classification of RNA-seq samples from public sequencing repositories (SRA, ENA, DDBJ) using metadata-based NLP. Part of the **Paipu framework** for pan-mammalian tumor data.
 

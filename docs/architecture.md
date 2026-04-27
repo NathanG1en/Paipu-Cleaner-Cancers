@@ -1,6 +1,6 @@
 # Architecture Guide
 
-This document provides a deep technical reference for the Freya Cancer Classification Pipeline. It covers every stage of the pipeline, the responsibility of each module, and the data flow from raw metadata to final classification.
+This document provides a deep technical reference for the Paipu Cancer Classification Pipeline. It covers every stage of the pipeline, the responsibility of each module, and the data flow from raw metadata to final classification.
 
 ## Table of Contents
 
