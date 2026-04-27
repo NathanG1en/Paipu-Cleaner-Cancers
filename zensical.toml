@@ -1,5 +1,5 @@
 [project]
-site_name = "Freya Cancer Classification Pipeline"
+site_name = "Paipu Cancer Classification Pipeline"
 site_description = "Automated cancer/non-cancer classification of RNA-seq samples using metadata-based NLP"
 site_url = ""
 docs_dir = "docs"

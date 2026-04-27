@@ -1,6 +1,6 @@
 # Quickstart Guide
 
-A hands-on walkthrough of the Freya Cancer Classification Pipeline — from installation to running your first classification, exploring every feature, and contributing improvements.
+A hands-on walkthrough of the Paipu Cancer Classification Pipeline — from installation to running your first classification, exploring every feature, and contributing improvements.
 
 > **Prerequisites**: Python ≥ 3.11.9, [uv](https://docs.astral.sh/uv/) (recommended) or pip.
 
@@ -11,7 +11,7 @@ A hands-on walkthrough of the Freya Cancer Classification Pipeline — from inst
 ```bash
 # Clone the repository
 git clone <repo-url>
-cd Freya-Cancers-Clean
+cd Paipu-Cleaner-Cancers
 
 # Install dependencies (using uv — recommended)
 uv sync
