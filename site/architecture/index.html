@@ -1,0 +1,1566 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Automated cancer/non-cancer classification of RNA-seq samples using metadata-based NLP">
+      
+      
+      
+        <link rel="canonical" href="/architecture/">
+      
+      
+        <link rel="prev" href="../quickstart/">
+      
+      
+        <link rel="next" href="../developer_guide/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="zensical-0.0.37">
+    
+    
+      
+        <title>Architecture Guide - Freya Cancer Classification Pipeline</title>
+      
+    
+    
+      
+        
+      
+      <link rel="stylesheet" href="../assets/stylesheets/modern/main.1e981d71.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,500,500i,700,700i%7CJetBrains+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,a=__md_scope)=>JSON.parse(t.getItem(a.pathname+"."+e)),__md_set=(e,t,a=localStorage,_=__md_scope)=>{try{a.setItem(_.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer" aria-label="Navigation"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#architecture-guide" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="./.." title="Freya Cancer Classification Pipeline" class="md-header__button md-logo" aria-label="Freya Cancer Classification Pipeline" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 7v14M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer" aria-label="Navigation">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Freya Cancer Classification Pipeline
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Architecture Guide
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search" aria-label="Search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog" aria-label="Search">
+  <button type="button" class="md-search__button">
+    Search
+  </button>
+</div>
+      
+    
+    <div class="md-header__source">
+      
+    </div>
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="./.." title="Freya Cancer Classification Pipeline" class="md-nav__button md-logo" aria-label="Freya Cancer Classification Pipeline" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 7v14M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg>
+
+    </a>
+    Freya Cancer Classification Pipeline
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="./.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#table-of-contents" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Table of Contents
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#pipeline-overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Pipeline Overview
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#data-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Data Flow
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Data Flow">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#columns-added-at-each-stage" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Columns Added at Each Stage
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#module-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Module Reference
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Module Reference">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#configpy-central-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>config.py</code> — Central Configuration
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#functionspy-orchestrator-facade" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>functions.py</code> — Orchestrator Facade
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#preprocessingpy-text-cleaning" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>preprocessing.py</code> — Text Cleaning
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#regex_classifierpy-pattern-matching" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>regex_classifier.py</code> — Pattern Matching
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nlp_classifierpy-medspacy-nlp" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>nlp_classifier.py</code> — MedSpaCy NLP
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pipelinepy-medspacy-singleton" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>pipeline.py</code> — MedSpaCy Singleton
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#text_column_processingpy-column-tiering" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>text_column_processing.py</code> — Column Tiering
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fallbackpy-fallback-pipeline" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>fallback.py</code> — Fallback Pipeline
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#metadata_enrichmentpy-post-classification-flags" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>metadata_enrichment.py</code> — Post-Classification Flags
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#classification-labels" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Classification Labels
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Classification Labels">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#internal-labels-confidence_category" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Internal Labels (confidence_category)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#final-label-mapping" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Final Label Mapping
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#resolved_by-column" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>resolved_by</code> Column
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#resolution-logic" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Resolution Logic
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Resolution Logic">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#decision-tree" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Decision Tree
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#medspacy-rules-system" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        MedSpaCy Rules System
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="MedSpaCy Rules System">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#targetrules" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        TargetRules
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#contextrules-negation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        ConTextRules (Negation)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#auto-generated-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Auto-Generated Rules
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fallback-system" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Fallback System
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Fallback System">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#built-in-providers" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Built-in Providers
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#usage" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Usage
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#metadata-enrichment" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Metadata Enrichment
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Metadata Enrichment">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#is_cell_line" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>is_cell_line</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#is_benign" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>is_benign</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../developer_guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Developer Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  
+                    
+                    
+                    
+                      
+                    
+                    
+                      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+                      <div class="md-sidebar-button__wrapper">
+                        <label class="md-sidebar-button" for="__toc"></label>
+                      </div>
+                    
+                  
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#table-of-contents" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Table of Contents
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#pipeline-overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Pipeline Overview
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#data-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Data Flow
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Data Flow">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#columns-added-at-each-stage" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Columns Added at Each Stage
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#module-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Module Reference
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Module Reference">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#configpy-central-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>config.py</code> — Central Configuration
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#functionspy-orchestrator-facade" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>functions.py</code> — Orchestrator Facade
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#preprocessingpy-text-cleaning" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>preprocessing.py</code> — Text Cleaning
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#regex_classifierpy-pattern-matching" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>regex_classifier.py</code> — Pattern Matching
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nlp_classifierpy-medspacy-nlp" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>nlp_classifier.py</code> — MedSpaCy NLP
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pipelinepy-medspacy-singleton" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>pipeline.py</code> — MedSpaCy Singleton
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#text_column_processingpy-column-tiering" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>text_column_processing.py</code> — Column Tiering
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fallbackpy-fallback-pipeline" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>fallback.py</code> — Fallback Pipeline
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#metadata_enrichmentpy-post-classification-flags" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>metadata_enrichment.py</code> — Post-Classification Flags
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#classification-labels" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Classification Labels
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Classification Labels">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#internal-labels-confidence_category" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Internal Labels (confidence_category)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#final-label-mapping" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Final Label Mapping
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#resolved_by-column" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>resolved_by</code> Column
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#resolution-logic" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Resolution Logic
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Resolution Logic">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#decision-tree" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Decision Tree
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#medspacy-rules-system" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        MedSpaCy Rules System
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="MedSpaCy Rules System">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#targetrules" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        TargetRules
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#contextrules-negation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        ConTextRules (Negation)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#auto-generated-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Auto-Generated Rules
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fallback-system" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Fallback System
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Fallback System">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#built-in-providers" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Built-in Providers
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#usage" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Usage
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#metadata-enrichment" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Metadata Enrichment
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Metadata Enrichment">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#is_cell_line" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>is_cell_line</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#is_benign" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>is_benign</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+<h1 id="architecture-guide">Architecture Guide<a class="headerlink" href="#architecture-guide" title="Permanent link">&para;</a></h1>
+<p>This document provides a deep technical reference for the Freya Cancer Classification Pipeline. It covers every stage of the pipeline, the responsibility of each module, and the data flow from raw metadata to final classification.</p>
+<h2 id="table-of-contents">Table of Contents<a class="headerlink" href="#table-of-contents" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="#pipeline-overview">Pipeline Overview</a></li>
+<li><a href="#data-flow">Data Flow</a></li>
+<li><a href="#module-reference">Module Reference</a></li>
+<li><a href="#classification-labels">Classification Labels</a></li>
+<li><a href="#resolution-logic">Resolution Logic</a></li>
+<li><a href="#medspacy-rules-system">MedSpaCy Rules System</a></li>
+<li><a href="#fallback-system">Fallback System</a></li>
+<li><a href="#metadata-enrichment">Metadata Enrichment</a></li>
+</ul>
+<hr />
+<h2 id="pipeline-overview">Pipeline Overview<a class="headerlink" href="#pipeline-overview" title="Permanent link">&para;</a></h2>
+<p>The pipeline classifies RNA-seq samples as <strong>CANCER</strong> or <strong>NON_CANCER</strong> using a multi-stage approach. Each stage adds information; later stages can override earlier ones when they have higher confidence.</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>┌──────────────┐    ┌──────────────┐    ┌──────────────┐    ┌──────────────┐    ┌──────────────┐
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>│   1. Regex   │───▶│  2. MedSpaCy │───▶│ 3. Resolution│───▶│ 4. Fallback  │───▶│ 5. Enrichment│
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>│   Classifier │    │     NLP      │    │    Logic     │    │  (optional)  │    │   Flags      │
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>└──────────────┘    └──────────────┘    └──────────────┘    └──────────────┘    └──────────────┘
+</span></code></pre></div>
+<p><strong>Entry point:</strong> <code>classify_cancer_samples()</code> in <code>functions.py</code> orchestrates all stages.</p>
+<hr />
+<h2 id="data-flow">Data Flow<a class="headerlink" href="#data-flow" title="Permanent link">&para;</a></h2>
+<pre class="mermaid"><code>flowchart TD
+    A["Raw DataFrame&lt;br/&gt;(CSV/Excel)"] --&gt; B["Text Preprocessing&lt;br/&gt;(preprocessing.py)"]
+    B --&gt; C["Regex Classification&lt;br/&gt;(regex_classifier.py)"]
+    C --&gt; D["MedSpaCy NLP&lt;br/&gt;(nlp_classifier.py)"]
+    D --&gt; E["Resolution Logic&lt;br/&gt;(nlp_classifier.py)"]
+    E --&gt; F{"Unresolved&lt;br/&gt;samples?"}
+    F -- Yes --&gt; G["Fallback Pipeline&lt;br/&gt;(fallback.py + providers/)"]
+    G --&gt; H["Metadata Enrichment&lt;br/&gt;(metadata_enrichment.py)"]
+    F -- No --&gt; H
+    H --&gt; I["Final DataFrame&lt;br/&gt;with labels + flags"]
+
+    style A fill:#e8f4fd
+    style I fill:#d4edda
+    style G fill:#fff3cd</code></pre>
+<h3 id="columns-added-at-each-stage">Columns Added at Each Stage<a class="headerlink" href="#columns-added-at-each-stage" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Stage</th>
+<th>Columns Added</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Regex</td>
+<td><code>regex_label</code>, <code>regex_reason</code></td>
+</tr>
+<tr>
+<td>MedSpaCy</td>
+<td><code>med_label</code>, <code>med_reason</code>, <code>med_source_columns</code></td>
+</tr>
+<tr>
+<td>Resolution</td>
+<td><code>confidence_category</code>, <code>resolved_by</code></td>
+</tr>
+<tr>
+<td>Fallback</td>
+<td><code>fallback_reason</code> (updates <code>confidence_category</code>, <code>resolved_by</code>)</td>
+</tr>
+<tr>
+<td>Enrichment</td>
+<td><code>is_cell_line</code>, <code>is_benign</code></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="module-reference">Module Reference<a class="headerlink" href="#module-reference" title="Permanent link">&para;</a></h2>
+<h3 id="configpy-central-configuration"><code>config.py</code> — Central Configuration<a class="headerlink" href="#configpy-central-configuration" title="Permanent link">&para;</a></h3>
+<p>The single source of truth for all rules, patterns, and constants.</p>
+<table>
+<thead>
+<tr>
+<th>Component</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ClassificationLabel</code></td>
+<td>Enum of all confidence categories</td>
+</tr>
+<tr>
+<td><code>MedSpaCyLabel</code></td>
+<td>Enum of MedSpaCy outputs (CANCER, NON_CANCER, NO_SIGNAL)</td>
+</tr>
+<tr>
+<td><code>ClassifierConfig</code></td>
+<td>Dataclass with column lists and thresholds</td>
+</tr>
+<tr>
+<td><code>RegexPatterns</code></td>
+<td>Compiled regex for cancer-positive, cancer-negative, and onco-traps</td>
+</tr>
+<tr>
+<td><code>CANCER_RULE_DEFINITIONS</code></td>
+<td>List of (literal, category, pattern) tuples for MedSpaCy TargetRules</td>
+</tr>
+<tr>
+<td><code>NON_CANCER_RULE_DEFINITIONS</code></td>
+<td>Same format for non-cancer terms</td>
+</tr>
+<tr>
+<td><code>CONTEXT_RULE_DEFINITIONS</code></td>
+<td>Negation trigger rules (e.g., "no", "absence of", "non-")</td>
+</tr>
+<tr>
+<td><code>CELL_LINE_PATTERN</code></td>
+<td>Regex for detecting cell lines</td>
+</tr>
+<tr>
+<td><code>BENIGN_PATTERN</code></td>
+<td>Regex for detecting benign conditions</td>
+</tr>
+</tbody>
+</table>
+<h3 id="functionspy-orchestrator-facade"><code>functions.py</code> — Orchestrator Facade<a class="headerlink" href="#functionspy-orchestrator-facade" title="Permanent link">&para;</a></h3>
+<p>A backward-compatible facade that re-exports all public functions from the split modules. The main function is:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">classify_cancer_samples</span><span class="p">(</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>    <span class="n">df</span><span class="p">,</span>                    <span class="c1"># Input DataFrame</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>    <span class="n">nlp_pipeline</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>     <span class="c1"># MedSpaCy pipeline (auto-created if None)</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>    <span class="n">batch_size</span><span class="o">=</span><span class="mi">64</span><span class="p">,</span>         <span class="c1"># Texts per MedSpaCy batch</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>    <span class="n">use_normalized</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>   <span class="c1"># Use _norm columns</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>    <span class="n">priority_cols</span><span class="o">=</span><span class="p">(</span><span class="o">...</span><span class="p">),</span>   <span class="c1"># Columns to search</span>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>    <span class="n">fallback_providers</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>  <span class="c1"># List of FallbackProvider instances</span>
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>    <span class="n">use_regex</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>        <span class="c1"># Enable/disable regex stage</span>
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>    <span class="n">use_medspacy</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>     <span class="c1"># Enable/disable NLP stage</span>
+</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>    <span class="n">use_fallback</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>    <span class="c1"># Enable/disable fallback stage</span>
+</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">pl</span><span class="o">.</span><span class="n">DataFrame</span>
+</span></code></pre></div>
+<h3 id="preprocessingpy-text-cleaning"><code>preprocessing.py</code> — Text Cleaning<a class="headerlink" href="#preprocessingpy-text-cleaning" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>clean_texts(row, priority_cols)</code> — Combines text from multiple columns into a single string for NLP processing.</li>
+<li><code>normalize_text_column(col_expr)</code> — Polars expression that lowercases, strips special characters, and normalizes whitespace. Applied once, reused everywhere.</li>
+<li><code>identify_candidate_text_columns(df)</code> — Auto-discovers viable text columns based on non-null percentage and average string length.</li>
+<li><code>preprocess_text_columns(df)</code> — Creates <code>_norm</code> suffixed normalized versions of specified columns.</li>
+</ul>
+<h3 id="regex_classifierpy-pattern-matching"><code>regex_classifier.py</code> — Pattern Matching<a class="headerlink" href="#regex_classifierpy-pattern-matching" title="Permanent link">&para;</a></h3>
+<p><code>apply_regex_classification(df, priority_cols, use_normalized)</code>:</p>
+<ol>
+<li>Checks each priority column for cancer-positive and cancer-negative regex matches.</li>
+<li>Counts mentions across columns (<code>n_cancer_mentions</code>, <code>n_negative_mentions</code>).</li>
+<li>Distinguishes <strong>sample-level</strong> signals (<code>source_name</code>, <code>tissue</code>) from <strong>study-level</strong> signals (<code>title</code>).</li>
+<li>Applies a cascading <code>WHEN/THEN</code> logic to assign <code>regex_label</code>.</li>
+<li>Builds a human-readable <code>regex_reason</code> string.</li>
+</ol>
+<p>Key design choice: Sample-level control/normal signals override study-level cancer signals. A sample with <code>source_name="normal tissue"</code> from a cancer study is classified as non-cancer.</p>
+<h3 id="nlp_classifierpy-medspacy-nlp"><code>nlp_classifier.py</code> — MedSpaCy NLP<a class="headerlink" href="#nlp_classifierpy-medspacy-nlp" title="Permanent link">&para;</a></h3>
+<p>Two main functions:</p>
+<p><strong><code>_classify_doc(doc)</code></strong> — Classifies a single spaCy Doc:
+- Counts cancer entities, non-cancer entities, and negated cancer entities.
+- If all cancer entities are negated → NON_CANCER.
+- If negated count &gt; affirmed count → NON_CANCER.
+- If any affirmed cancer → CANCER.
+- If only non-cancer terms → NON_CANCER.
+- Otherwise → NO_SIGNAL.</p>
+<p><strong><code>medspacy_classify_batch(df, nlp_pipeline, ...)</code></strong> — Processes the full DataFrame:
+- Iterates each row, processing each priority column individually.
+- Tracks which columns contain cancer entities (<code>med_source_columns</code>).
+- Concatenates all column texts and classifies the combined result.</p>
+<p><strong><code>resolve_uncertain(regex_label, med_label, med_source_columns)</code></strong> — Combines results:
+- See <a href="#resolution-logic">Resolution Logic</a> below.</p>
+<h3 id="pipelinepy-medspacy-singleton"><code>pipeline.py</code> — MedSpaCy Singleton<a class="headerlink" href="#pipelinepy-medspacy-singleton" title="Permanent link">&para;</a></h3>
+<p>Manages a singleton MedSpaCy pipeline instance:</p>
+<ul>
+<li><code>get_nlp()</code> — Returns the shared pipeline (creates it on first call).</li>
+<li><code>NLPPipelineManager</code> — Singleton class with <code>get_pipeline()</code>, <code>add_rules()</code>, <code>reset()</code>, <code>get_rule_count()</code>.</li>
+<li><code>generate_disease_rules(unique_diseases, nlp, existing_rules)</code> — Auto-generates TargetRules from disease column values.</li>
+</ul>
+<h3 id="text_column_processingpy-column-tiering"><code>text_column_processing.py</code> — Column Tiering<a class="headerlink" href="#text_column_processingpy-column-tiering" title="Permanent link">&para;</a></h3>
+<p>Organizes DataFrame columns into three tiers:</p>
+<table>
+<thead>
+<tr>
+<th>Tier</th>
+<th>Description</th>
+<th>Examples</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Priority</td>
+<td>Always processed</td>
+<td><code>title</code>, <code>source_name</code>, <code>tissue</code>, <code>disease</code>, <code>cell_type</code></td>
+</tr>
+<tr>
+<td>Secondary</td>
+<td>Processed if present</td>
+<td><code>sample_name</code>, <code>condition</code>, <code>health_state</code></td>
+</tr>
+<tr>
+<td>Discovered</td>
+<td>Auto-detected by heuristics</td>
+<td>Columns with sufficient non-null % and avg string length</td>
+</tr>
+</tbody>
+</table>
+<p><code>preprocess_dataframe(df, config)</code> runs the full preprocessing pipeline and creates <code>_norm</code> columns.</p>
+<h3 id="fallbackpy-fallback-pipeline"><code>fallback.py</code> — Fallback Pipeline<a class="headerlink" href="#fallbackpy-fallback-pipeline" title="Permanent link">&para;</a></h3>
+<p>See <a href="#fallback-system">Fallback System</a>.</p>
+<h3 id="metadata_enrichmentpy-post-classification-flags"><code>metadata_enrichment.py</code> — Post-Classification Flags<a class="headerlink" href="#metadata_enrichmentpy-post-classification-flags" title="Permanent link">&para;</a></h3>
+<p>Adds boolean columns by scanning configurable sets of text columns for regex patterns:</p>
+<ul>
+<li><code>is_cell_line</code> — Matches 50+ known cell line names (HeLa, 4T1, B16, etc.) and phrases like "cell line".</li>
+<li><code>is_benign</code> — Matches "benign", "non-malignant", etc.</li>
+</ul>
+<hr />
+<h2 id="classification-labels">Classification Labels<a class="headerlink" href="#classification-labels" title="Permanent link">&para;</a></h2>
+<h3 id="internal-labels-confidence_category">Internal Labels (confidence_category)<a class="headerlink" href="#internal-labels-confidence_category" title="Permanent link">&para;</a></h3>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>confident_cancer        ── Regex + MedSpaCy both agree: cancer
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>likely_cancer           ── Probable cancer, minor ambiguity
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>confirmed_by_medspacy   ── Regex uncertain, MedSpaCy found cancer
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>confirmed_non_cancer    ── No cancer signal or confirmed negative
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>likely_non_cancer       ── Negative context detected
+</span></code></pre></div>
+<h3 id="final-label-mapping">Final Label Mapping<a class="headerlink" href="#final-label-mapping" title="Permanent link">&para;</a></h3>
+<p>The internal labels map to a binary output for downstream use:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="p">{</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>    <span class="s2">&quot;confident_cancer&quot;</span><span class="p">:</span>      <span class="s2">&quot;CANCER&quot;</span><span class="p">,</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>    <span class="s2">&quot;likely_cancer&quot;</span><span class="p">:</span>         <span class="s2">&quot;CANCER&quot;</span><span class="p">,</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>    <span class="s2">&quot;confirmed_by_medspacy&quot;</span><span class="p">:</span> <span class="s2">&quot;CANCER&quot;</span><span class="p">,</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>    <span class="s2">&quot;confirmed_non_cancer&quot;</span><span class="p">:</span>  <span class="s2">&quot;NON_CANCER&quot;</span><span class="p">,</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>    <span class="s2">&quot;likely_non_cancer&quot;</span><span class="p">:</span>     <span class="s2">&quot;NON_CANCER&quot;</span><span class="p">,</span>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="p">}</span>
+</span></code></pre></div>
+<h3 id="resolved_by-column"><code>resolved_by</code> Column<a class="headerlink" href="#resolved_by-column" title="Permanent link">&para;</a></h3>
+<p>Tracks which stage made the final determination:</p>
+<table>
+<thead>
+<tr>
+<th>Value</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>regex</code></td>
+<td>Regex had a clear signal, MedSpaCy had no signal</td>
+</tr>
+<tr>
+<td><code>medspacy</code></td>
+<td>Regex was uncertain, MedSpaCy resolved it</td>
+</tr>
+<tr>
+<td><code>regex+medspacy</code></td>
+<td>Both stages contributed</td>
+</tr>
+<tr>
+<td><code>default</code></td>
+<td>Neither stage found anything; defaulted to non-cancer</td>
+</tr>
+<tr>
+<td><code>expanded_search</code></td>
+<td>Fallback: found terms in non-priority columns</td>
+</tr>
+<tr>
+<td><code>ncbi_api</code></td>
+<td>Fallback: NCBI BioProject metadata had cancer terms</td>
+</tr>
+<tr>
+<td><code>gemini_llm</code> / <code>ollama_llm</code></td>
+<td>Fallback: LLM classified the sample</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="resolution-logic">Resolution Logic<a class="headerlink" href="#resolution-logic" title="Permanent link">&para;</a></h2>
+<p>The <code>resolve_uncertain()</code> function in <code>nlp_classifier.py</code> combines regex and MedSpaCy results. The key insight is distinguishing <strong>sample-level</strong> columns (describe the physical sample) from <strong>study-level</strong> columns (describe the research project).</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>Study-level only = {title, diagnosis, cell_type}
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>Sample-level     = everything else (source_name, tissue, disease, ...)
+</span></code></pre></div>
+<h3 id="decision-tree">Decision Tree<a class="headerlink" href="#decision-tree" title="Permanent link">&para;</a></h3>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>IF regex = confident_cancer:
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>    → confident_cancer (regex is definitive)
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>IF regex = likely_non_cancer:
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>    IF medspacy = CANCER AND cancer found in sample-level columns:
+</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>        → confirmed_by_medspacy (sample evidence overrides)
+</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>    ELSE:
+</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>        → confirmed_non_cancer (sample-level non-cancer prevails)
+</span><span id="__span-5-9"><a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>
+</span><span id="__span-5-10"><a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a>IF regex = likely_cancer:
+</span><span id="__span-5-11"><a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a>    IF medspacy = CANCER: → likely_cancer
+</span><span id="__span-5-12"><a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a>    IF medspacy = NON_CANCER: → likely_non_cancer
+</span><span id="__span-5-13"><a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a>    ELSE: → likely_cancer (benefit of the doubt)
+</span><span id="__span-5-14"><a id="__codelineno-5-14" name="__codelineno-5-14" href="#__codelineno-5-14"></a>
+</span><span id="__span-5-15"><a id="__codelineno-5-15" name="__codelineno-5-15" href="#__codelineno-5-15"></a>IF regex = uncertain_*:
+</span><span id="__span-5-16"><a id="__codelineno-5-16" name="__codelineno-5-16" href="#__codelineno-5-16"></a>    IF medspacy = CANCER: → confirmed_by_medspacy
+</span><span id="__span-5-17"><a id="__codelineno-5-17" name="__codelineno-5-17" href="#__codelineno-5-17"></a>    IF medspacy = NON_CANCER: → confirmed_non_cancer
+</span><span id="__span-5-18"><a id="__codelineno-5-18" name="__codelineno-5-18" href="#__codelineno-5-18"></a>    ELSE: → confirmed_non_cancer (default to non-cancer)
+</span></code></pre></div>
+<hr />
+<h2 id="medspacy-rules-system">MedSpaCy Rules System<a class="headerlink" href="#medspacy-rules-system" title="Permanent link">&para;</a></h2>
+<h3 id="targetrules">TargetRules<a class="headerlink" href="#targetrules" title="Permanent link">&para;</a></h3>
+<p>TargetRules define what entities the NLP pipeline can detect. Each rule has:
+- <strong>literal</strong> — Exact text match (e.g., <code>"osteosarcoma"</code>)
+- <strong>category</strong> — Entity label (<code>CANCER</code> or <code>NON_CANCER</code>)
+- <strong>pattern</strong> — Optional regex pattern for flexible matching (e.g., <code>r"\btumou?rs?\b"</code>)</p>
+<p>Rules are defined as tuples in <code>config.py</code> (<code>CANCER_RULE_DEFINITIONS</code>, <code>NON_CANCER_RULE_DEFINITIONS</code>) and converted to <code>TargetRule</code> objects in <code>pipeline.py</code>.</p>
+<h3 id="contextrules-negation">ConTextRules (Negation)<a class="headerlink" href="#contextrules-negation" title="Permanent link">&para;</a></h3>
+<p>ConTextRules define how the pipeline detects negation. Each rule has:
+- <strong>literal</strong> — The trigger phrase (e.g., <code>"no evidence of"</code>)
+- <strong>category</strong> — Always <code>NEGATED_EXISTENCE</code>
+- <strong>direction</strong> — <code>FORWARD</code> (negates entities after the trigger) or <code>BACKWARD</code> (negates entities before)</p>
+<p>Current negation triggers include:
+<code>non-</code>, <code>no</code>, <code>without</code>, <code>absence of</code>, <code>free of</code>, <code>negative for</code>, <code>no evidence of</code>, <code>ruled out</code>, <code>denies</code>, <code>denied</code>.</p>
+<h3 id="auto-generated-rules">Auto-Generated Rules<a class="headerlink" href="#auto-generated-rules" title="Permanent link">&para;</a></h3>
+<p><code>generate_disease_rules()</code> dynamically creates additional TargetRules from unique values in the <code>disease</code> column of the dataset. This ensures the pipeline recognizes dataset-specific disease terms not covered by the default rules.</p>
+<hr />
+<h2 id="fallback-system">Fallback System<a class="headerlink" href="#fallback-system" title="Permanent link">&para;</a></h2>
+<p>The fallback system uses a <strong>provider chain</strong> pattern. Each provider implements the <code>FallbackProvider</code> abstract class with a <code>classify(sample)</code> method. The <code>FallbackPipeline</code> orchestrator:</p>
+<ol>
+<li>Identifies unresolved samples (<code>confirmed_non_cancer</code> + <code>no_relevant_terms</code>).</li>
+<li>Passes them through providers in order.</li>
+<li>Stops at the first provider that returns a resolved result (confidence ≥ 0.5).</li>
+</ol>
+<h3 id="built-in-providers">Built-in Providers<a class="headerlink" href="#built-in-providers" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Provider</th>
+<th>Module</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ExpandedSearchProvider</code></td>
+<td><code>fallback.py</code></td>
+<td>Scans ALL text columns (not just priority) for cancer terms</td>
+</tr>
+<tr>
+<td><code>NCBIProvider</code></td>
+<td><code>providers/ncbi.py</code></td>
+<td>Fetches BioProject metadata from NCBI E-utilities; disk-cached</td>
+</tr>
+<tr>
+<td><code>GeminiProvider</code></td>
+<td><code>providers/llm.py</code></td>
+<td>Google Gemini API classification with retry/rate-limit handling</td>
+</tr>
+<tr>
+<td><code>OllamaProvider</code></td>
+<td><code>providers/llm.py</code></td>
+<td>Local LLM classification via Ollama REST API</td>
+</tr>
+</tbody>
+</table>
+<h3 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">fallback</span><span class="w"> </span><span class="kn">import</span> <span class="n">ExpandedSearchProvider</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">providers</span><span class="w"> </span><span class="kn">import</span> <span class="n">NCBIProvider</span><span class="p">,</span> <span class="n">GeminiProvider</span>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="n">providers</span> <span class="o">=</span> <span class="p">[</span>
+</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>    <span class="n">ExpandedSearchProvider</span><span class="p">(</span><span class="n">nlp_pipeline</span><span class="o">=</span><span class="n">nlp</span><span class="p">),</span>
+</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>    <span class="n">NCBIProvider</span><span class="p">(</span><span class="n">email</span><span class="o">=</span><span class="s2">&quot;your@email.com&quot;</span><span class="p">),</span>
+</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>    <span class="n">GeminiProvider</span><span class="p">(</span><span class="n">api_key</span><span class="o">=</span><span class="s2">&quot;your-key&quot;</span><span class="p">),</span>
+</span><span id="__span-6-8"><a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="p">]</span>
+</span><span id="__span-6-9"><a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a>
+</span><span id="__span-6-10"><a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a><span class="n">results</span> <span class="o">=</span> <span class="n">classify_cancer_samples</span><span class="p">(</span>
+</span><span id="__span-6-11"><a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a>    <span class="n">df</span><span class="p">,</span>
+</span><span id="__span-6-12"><a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a>    <span class="n">fallback_providers</span><span class="o">=</span><span class="n">providers</span><span class="p">,</span>
+</span><span id="__span-6-13"><a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a>    <span class="n">use_fallback</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-6-14"><a id="__codelineno-6-14" name="__codelineno-6-14" href="#__codelineno-6-14"></a><span class="p">)</span>
+</span></code></pre></div>
+<hr />
+<h2 id="metadata-enrichment">Metadata Enrichment<a class="headerlink" href="#metadata-enrichment" title="Permanent link">&para;</a></h2>
+<p>After classification, <code>enrich_metadata()</code> adds two boolean flags:</p>
+<h3 id="is_cell_line"><code>is_cell_line</code><a class="headerlink" href="#is_cell_line" title="Permanent link">&para;</a></h3>
+<p>Scans columns (<code>cell_line</code>, <code>cell_type</code>, <code>source_name</code>, <code>model</code>, <code>tumor_type</code>, <code>title</code>, etc.) for:
+- Explicit phrases: "cell line", "cell culture"
+- Named cell lines: HeLa, HEK-293, MCF-7, MDA-MB, A549, 4T1, B16, CT26, etc.
+- 50+ mouse, human, rat, and canine cell line patterns</p>
+<h3 id="is_benign"><code>is_benign</code><a class="headerlink" href="#is_benign" title="Permanent link">&para;</a></h3>
+<p>Scans columns (<code>disease</code>, <code>source_name</code>, <code>tissue</code>, <code>phenotype</code>, <code>tumor_type</code>, <code>title</code>, <code>cell_type</code>) for:
+- "benign", "non-malignant", "benign tumor/neoplasm/lesion/growth"</p>
+<p>Both flags use the same <code>_detect_flag()</code> internal function, which normalizes text and checks for regex matches across multiple columns.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://zensical.org/" target="_blank" rel="noopener">
+      Zensical
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate":null,"base":"..","features":[],"search":"../assets/javascripts/workers/search.e2d2d235.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.dbc0afdc.min.js"></script>
+      
+    
+  </body>
+</html>
